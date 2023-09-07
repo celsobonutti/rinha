@@ -1,0 +1,5 @@
+{"version": 2,
+ "packages":
+ [{"url": "https://github.com/algebraic-sofia/soda.git",
+   "rev": "32ce9234fadfec34f54eb33a2adc65f165397c67",
+   "name": "soda"}]}
