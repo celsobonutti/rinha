@@ -1,3 +1,2 @@
 import Rinha.Environment
-
-def hello := "world"
+import Rinha.Term

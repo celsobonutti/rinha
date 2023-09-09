@@ -9,6 +9,15 @@ lean_lib Rinha {
   -- add library configuration options here
 }
 
+lean_lib Map {
+
+}
+
+
+lean_lib JSON {
+
+}
+
 lean_exe rinha {
   root := `Main
 }

@@ -1,111 +1,42 @@
 import Init.Data.Int.Basic
 
-inductive BinaryTree (α : Type) where
-  | null : BinaryTree α
-  | node : BinaryTree α → α → BinaryTree α → BinaryTree α
-deriving Repr
+inductive Map (α β : Type) [Ord α] [Hashable α] where
+  | empty : Map α β
+  | node : Map α β → (UInt64 × β) → Map α β → Map α β
+  deriving Repr
 
-open BinaryTree in
-def BinaryTree.size : BinaryTree α → Nat
-  | null => 0
-  | node left _ right => 1 + left.size + right.size
+namespace Map
 
-def BinaryTree.depth : BinaryTree α → Nat
-  | null => 0
-  | node left _ right => 1 + max left.size right.size
-
-def BinaryTree.leaves : BinaryTree α → List α
-  | BinaryTree.null => []
-  | BinaryTree.node BinaryTree.null x BinaryTree.null => [x]
-  | BinaryTree.node left _ right => left.leaves ++ right.leaves
-
-def BinaryTree.map : (α → β) → BinaryTree α → BinaryTree β
-  | _, BinaryTree.null => BinaryTree.null
-  | f, BinaryTree.node left x right =>
-    BinaryTree.node (map f left) (f x) (map f right)
-
-instance : Functor BinaryTree where
-  map := BinaryTree.map
-
-def BinaryTree.elem : Int → BinaryTree Int → Bool
-  | _, BinaryTree.null => False
-  | x, BinaryTree.node left x' right =>
-    x == x' || left.elem x || right.elem x
-
-def BinaryTree.maximum : BinaryTree Int → Int
-  | BinaryTree.null => 0
-  | BinaryTree.node left x right => max (max left.maximum x) right.maximum
-
-def BinaryTree.minimum : BinaryTree Int → Int
-  | BinaryTree.null => 0
-  | BinaryTree.node left x right => min (min left.minimum x) right.minimum
-
-def BinaryTree.flatten : BinaryTree α → List α
-  | BinaryTree.null => []
-  | BinaryTree.node left x right => left.flatten ++ [x] ++ right.flatten
-
-inductive Direction where
-  | right
-  | left
-
-inductive Rotation where
-  | none : Rotation
-  | single : Direction → Rotation
-  | double: Direction → Rotation
-
-def necessaryRotation : BinaryTree α → BinaryTree α → Rotation
-  | x, y =>
-    let sizeDifference := (x.depth : Int) - (y.depth : Int)
-    if [-1, 0, 1].elem sizeDifference then
-      Rotation.none
-    else
-      Rotation.none
-
--- Needs implementation
-def BinaryTree.balance : BinaryTree α → BinaryTree α
-  | BinaryTree.null => BinaryTree.null
-  | BinaryTree.node left x right =>
-    match necessaryRotation left right with
-      | Rotation.none => BinaryTree.node left x right
-      | Rotation.single Direction.right => BinaryTree.node left x right
-      | Rotation.single Direction.left => BinaryTree.node left x right
-      | Rotation.double Direction.right => BinaryTree.node left x right
-      | Rotation.double Direction.left => BinaryTree.node left x right
-
-abbrev Map (α β : Type) [Hashable α] [Ord α] : Type := BinaryTree (UInt64 × β)
-
-def Map.Empty [Ord α] [Hashable α]: Map α β := BinaryTree.null
-
-def Map.getOption {α β : Type} [Ord α] [Hashable α] : α → Map α β → Option β
-| _, BinaryTree.null => Option.none
-| x, BinaryTree.node left (y, value) right =>
+def getOption {α β : Type} [Ord α] [Hashable α] : α → Map α β → Option β
+| _, empty => Option.none
+| x, node left (y, value) right =>
   match Ord.compare (Hashable.hash x) y with
   | Ordering.eq => Option.some value
-  | Ordering.lt => Map.getOption x left
-  | Ordering.gt => Map.getOption x right
+  | Ordering.lt => getOption x left
+  | Ordering.gt => getOption x right
 
-def Map.insert {α β : Type} [Ord α] [Hashable α] : α → β → Map α β → Map α β
-| x, y, BinaryTree.null => BinaryTree.node BinaryTree.null (Hashable.hash x, y) BinaryTree.null
-| x, y, BinaryTree.node left (key, value) right =>
+def insert {α β : Type} [Ord α] [Hashable α] : α → β → Map α β → Map α β
+| x, y, empty => node empty (Hashable.hash x, y) empty
+| x, y, node left (key, value) right =>
   let
     hashed := Hashable.hash x
   match Ord.compare hashed key with
-  | Ordering.eq => BinaryTree.node left (hashed, y) right
-  | Ordering.lt => BinaryTree.node (Map.insert x y left) (key, value) right
-  | Ordering.gt => BinaryTree.node left (key, value) (Map.insert x y right)
+  | Ordering.eq => node left (hashed, y) right
+  | Ordering.lt => node (insert x y left) (key, value) right
+  | Ordering.gt => node left (key, value) (insert x y right)
 
-def Map.Mem [Ord α] [Hashable α] (x : α) : Map α β → Prop
-  | .null => False
+def Mem [Ord α] [Hashable α] (x : α) : Map α β → Prop
+  | .empty => False
   | .node left (y, _) right => (Hashable.hash x = y) ∨ (Mem x left) ∨ (Mem x right)
 
 instance [Ord α] [Hashable α] : Membership α (Map α β) where
-  mem := Map.Mem
+  mem := Mem
 
 instance Mem.decidableMap [DecidableEq α] [Ord α] [Hashable α] (x : α) : ∀ xs : Map α β, Decidable (x ∈ xs)
-  | BinaryTree.null => by
+  | empty => by
     apply Decidable.isFalse
-    simp [Membership.mem, Map.Mem]
-  | BinaryTree.node left (y, v) right =>
+    simp [Membership.mem, Mem]
+  | node left (y, v) right =>
     let hashed := Hashable.hash x
     if h : hashed = y then
       isTrue <| by
@@ -114,8 +45,8 @@ instance Mem.decidableMap [DecidableEq α] [Ord α] [Hashable α] (x : α) : ∀
     else by
       have := Mem.decidableMap x left
       have := Mem.decidableMap x right
-      have : (x ∈ left ∨ x ∈ right) ↔ (x ∈ BinaryTree.node left (y, v) right) := by
-        simp [(· ∈ ·), Map.Mem, h]
+      have : (x ∈ left ∨ x ∈ right) ↔ (x ∈ node left (y, v) right) := by
+        simp [(· ∈ ·), Mem, h]
       exact decidable_of_decidable_of_iff this
 
 theorem Or.elimLeft (xs : α ∨ β) (x: ¬α) : β :=
@@ -123,21 +54,62 @@ theorem Or.elimLeft (xs : α ∨ β) (x: ¬α) : β :=
   | Or.inl y => absurd y x
   | Or.inr b => b
 
-def Map.get {α β : Type} [DecidableEq α] [Ord α] [Hashable α] : (x : α) → { xs : Map α β // x ∈ xs } → β
-  | x, ⟨BinaryTree.node left (y, v) right, ok⟩ =>
+def get {α β : Type} [DecidableEq α] [Ord α] [Hashable α] : (x : α) → { xs : Map α β // x ∈ xs } → β
+  | x, ⟨node left (y, v) right, ok⟩ =>
     let hashed := Hashable.hash x
     if here : hashed = y then
       v
     else
       if l : x ∈ left then
-        Map.get x ⟨ left, l ⟩
+        get x ⟨ left, l ⟩
       else
-        Map.get x ⟨ right, (ok.elimLeft here).elimLeft l ⟩
+        get x ⟨ right, Map.Or.elimLeft (Map.Or.elimLeft ok here) l ⟩
 
-def Map.ofList [Hashable α] [Ord α] : List (α × β) → Map α β
-| [] => Map.Empty
+def ofList [Hashable α] [Ord α] : List (α × β) → Map α β
+| [] => empty
 | (x, y) :: rest =>
-  Map.insert x y (Map.ofList rest)
+  insert x y (ofList rest)
 
 instance [Hashable α] [Ord α] : Coe (List (α × β)) (Map α β) where
-  coe := Map.ofList
+  coe := ofList
+
+theorem belongIff [Ord α] [Hashable α] {x : α} {xs : Map α β} : x ∈ xs ↔ Mem x xs := by
+  simp [(·∈·)];
+
+theorem belongs {α β : Type} [Ord α] [Hashable α] {y : β} {left right : Map α β} : ∀ {x : α}, x ∈ node left (hash x, y) right := by
+  intro x;
+  simp [(·∈·), Mem];
+
+theorem belongsL {α β : Type} [Ord α] [Hashable α] { n : UInt64 × β } {left right : Map α β} : ∀ {x : α}, x ∈ left → x ∈ node left n right := by
+  intro x
+  intro belong
+  simp [(·∈·), Mem, Iff.mp belongIff belong]
+
+theorem belongsR {α β : Type} [Ord α] [Hashable α] { n : UInt64 × β } {left right : Map α β} : ∀ {x : α}, x ∈ right → x ∈ node left n right := by
+  intro x
+  intro belong
+  simp [(·∈·), Mem, Iff.mp belongIff belong]
+
+def insertP {α β : Type} [Ord α] [Hashable α] : (x : α) → β → Map α β → { xs : Map α β // x ∈ xs }
+| x, y, empty => ⟨ node empty (Hashable.hash x, y) empty, belongs ⟩
+| x, y, node left (key, value) right =>
+  let
+    hashed := Hashable.hash x
+  match Ord.compare hashed key with
+  | Ordering.eq =>
+    ⟨ node left (hashed, y) right, belongs ⟩
+  | Ordering.lt =>
+    let ins := insertP x y left
+    match ins with
+    | ⟨ l, p ⟩ =>
+      ⟨ node l (key, value) right, belongsL p ⟩
+  | Ordering.gt =>
+  let ins := insertP x y right
+  match ins with
+    | ⟨ r, p ⟩ =>
+      ⟨ node left (key, value) r, belongsR p ⟩
+
+instance [Ord α] [Hashable α] [DecidableEq α] : GetElem (Map α β) α β (λ map elem => elem ∈ map) where
+  getElem map elem proof := get elem ⟨ map, proof ⟩
+
+end Map
