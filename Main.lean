@@ -1,8 +1,6 @@
 import Rinha
 import Init.Data.Repr
 
-open Rinha.Environment
-
 def parseWithIOError (value : String) : IO JSON := do
   match JSON.parse value with
   | Option.some json => pure json
