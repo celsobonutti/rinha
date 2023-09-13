@@ -24,13 +24,13 @@ structure Function (α : Type) where
   value : α
 deriving Repr, BEq, DecidableEq
 
-structure Let (α : Type) where
+structure Let' (α : Type) where
   name : Parameter
   value : α
   next : α
 deriving Repr, BEq, DecidableEq
 
-structure If (α : Type) where
+structure If' (α : Type) where
   condition : α
   then' : α
   otherwise : α
@@ -43,8 +43,8 @@ inductive Term
 | Call : Term → List Term → Term
 | Function : Function Term → Term
 | Binary : Binary Term → Term
-| Let : Let Term → Term
-| If : If Term → Term
+| Let : Let' Term → Term
+| If : If' Term → Term
 | Print : Term → Term
 | First : Term → Term
 | Second : Term → Term
