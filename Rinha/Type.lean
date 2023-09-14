@@ -42,7 +42,7 @@ structure TypedBinOp where
   result : T
 deriving Repr, BEq
 
-def TypedBinOp.fromBinOp : BinOp → TypedBinOp
+def TypedBinOp.ofBinOp : BinOp → TypedBinOp
 | BinOp.Add => { op := BinOp.Add, left := T.oneOf [T.int, T.string], right := T.oneOf [T.int, T.string], result := T.oneOf [T.int, T.string] }
 | BinOp.Sub => { op := BinOp.Sub, left := T.int, right := T.int, result := T.int }
 | BinOp.Mul => { op := BinOp.Mul, left := T.int, right := T.int, result := T.int }
@@ -84,7 +84,7 @@ partial def Expr.ofTerm : Term → Expr
 | Term.Function { parameters, value } => Expr.func (parameters.map (·.value)) (Expr.ofTerm value)
 | Term.Let { name, value, next } => Expr.let_ name.value (Expr.ofTerm value) (Expr.ofTerm next)
 | Term.If { condition, consequent, alternative } => Expr.if_ (Expr.ofTerm condition) (Expr.ofTerm consequent) (Expr.ofTerm alternative)
-| Term.Binary binop => Expr.op (TypedBinOp.fromBinOp binop.op) (Expr.ofTerm binop.lhs) (Expr.ofTerm binop.rhs)
+| Term.Binary binop => Expr.op (TypedBinOp.ofBinOp binop.op) (Expr.ofTerm binop.lhs) (Expr.ofTerm binop.rhs)
 
 
 instance : ToString T where
@@ -330,10 +330,8 @@ def ti : TypeEnv → Expr → TI (Subst × T)
   let env₁ := env.insert x (Scheme.scheme [] tv)
   let (s₁, t₁) ← ti env₁ e₁
   let s' ← mgu (t₁.apply s₁) tv
-  IO.println s'.toList
   let env₂ := env₁.apply s'
   let scheme := generalize env₂ t₁
-  IO.println <| ("scheme: " ++ reprStr scheme)
   let (s₂, t₂) ← ti (env₂.insert x scheme) e₂
   pure (s₁.compose s₂, t₂)
 
@@ -347,7 +345,7 @@ open Expr
 open Literal
 open BinOp
 
-def toTyped : BinOp → TypedBinOp := TypedBinOp.fromBinOp
+def toTyped : BinOp → TypedBinOp := TypedBinOp.ofBinOp
 
 def e₀ := let_ "id" (func ["x"] (var "x")) (var "id")
 def e₁ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Eq) (lit (int 2)) (var "x"))) (var "id")
