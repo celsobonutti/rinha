@@ -23,7 +23,6 @@ inductive T where
 | int : T
 | bool : T
 | string : T
-| unit : T
 | func : List T → T → T
 | var : String → T
 | tuple : (T × T) → T
@@ -90,7 +89,6 @@ partial def T.ftv : T → List String
 | T.bool => {}
 | T.int => {}
 | T.string => {}
-| T.unit => {}
 | T.oneOf ts => ts.foldl (λ x y => List.union x (ftv y)) {}
 | T.func args ret => (args.foldl (λ x y => List.union x (ftv y)) (ftv ret))
 | T.tuple (x, y) => List.union x.ftv y.ftv
@@ -215,7 +213,6 @@ partial def mgu : T → T → TI Subst
 | T.int, T.int => pure {}
 | T.bool, T.bool => pure {}
 | T.string, T.string => pure {}
-| T.unit, T.unit => pure {}
 | T.tuple (a, b), T.tuple (c, d) => do
   let s₁ ← mgu a c
   let s₂ ← mgu b d
@@ -309,8 +306,9 @@ def ti : TypeEnv → Expr → TI (Subst × T)
   let (s, t) ← ti env e
   let s₂ ← mgu t (T.tuple (T.var "t₀", T.var "t₁"))
   pure (s₂.compose s, T.var "t₁")
-| _, Expr.print _ => do
-  pure ({}, T.unit)
+| env, Expr.print expr => do
+  let (s, t) ← ti env expr
+  pure (s, t)
 | env, Expr.let_ x e₁ e₂ => do
   let (s₁, t₁) ← ti env e₁
   let env₁ := env.apply s₁
