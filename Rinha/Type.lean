@@ -1,6 +1,6 @@
 import Mathlib.Init.Set
 import Init.Data.List.Basic
-import Init.Data.Repr
+import Init.Data.List.Control
 import Std.Data.List.Basic
 import Rinha.Term
 import Std.Data.HashMap.Basic
@@ -23,11 +23,19 @@ inductive T where
 | int : T
 | bool : T
 | string : T
+| unit : T
 | func : T → T → T
+| func' : List T → T → T
 | var : String → T
 | tuple : (T × T) → T
--- | oneOf : List T → T
+| oneOf : List T → T
 deriving Repr, BEq, Inhabited
+
+def T.combine : T → T → T
+| T.oneOf xs, T.oneOf ys => T.oneOf (xs ++ ys)
+| T.oneOf xs, y => T.oneOf (y :: xs)
+| x, T.oneOf ys => T.oneOf (x :: ys)
+| x, y => if x == y then x else T.oneOf [x, y]
 
 structure TypedBinOp where
   op : BinOp
@@ -37,7 +45,7 @@ structure TypedBinOp where
 deriving Repr, BEq
 
 def TypedBinOp.fromBinOp : BinOp → TypedBinOp
-| BinOp.Add => { op := BinOp.Add, left := T.int, right := T.int, result := T.int }
+| BinOp.Add => { op := BinOp.Add, left := T.oneOf [T.int, T.string], right := T.oneOf [T.int, T.string], result := T.oneOf [T.int, T.string] }
 | BinOp.Sub => { op := BinOp.Sub, left := T.int, right := T.int, result := T.int }
 | BinOp.Mul => { op := BinOp.Mul, left := T.int, right := T.int, result := T.int }
 | BinOp.Div => { op := BinOp.Div, left := T.int, right := T.int, result := T.int }
@@ -56,6 +64,8 @@ inductive Expr where
 | lit : Literal → Expr
 | app : Expr → Expr → Expr
 | func : String → Expr → Expr
+| func' : List String → Expr → Expr
+| app' : Expr → List Expr → Expr
 | let' : String → Expr → Expr → Expr
 | op : TypedBinOp → Expr → Expr → Expr
 | if_ : Expr → Expr → Expr → Expr
@@ -83,8 +93,9 @@ partial def T.ftv : T → List String
 | T.bool => {}
 | T.int => {}
 | T.string => {}
--- | T.oneOf ts => ts.foldl (λ x y => List.union x (ftv y)) {}
--- | T.func args ret => (args.foldl (λ x y => List.union x (ftv y)) (ftv ret))
+| T.unit => {}
+| T.oneOf ts => ts.foldl (λ x y => List.union x (ftv y)) {}
+| T.func' args ret => (args.foldl (λ x y => List.union x (ftv y)) (ftv ret))
 | T.func arg ret => List.union arg.ftv ret.ftv
 | T.tuple (x, y) => List.union x.ftv y.ftv
 
@@ -93,7 +104,7 @@ partial def T.apply : Subst → T → T
   | some t => t
   | none => T.var x
 -- | s, (T.func args ret) => T.func (args.map (apply s)) (apply s ret)
-| s, (T.func arg ret) => T.func (arg.apply s) (apply s ret)
+| s, (T.func arg ret) => T.func (apply s arg) (apply s ret)
 | _, t => t
 
 instance : Types T := ⟨T.ftv, T.apply⟩
@@ -119,9 +130,21 @@ def nullSubst : Subst := {}
 def Subst.map (f : α → β) [BEq γ] [Hashable γ] : (x : Std.HashMap γ α) → Std.HashMap γ β :=
  Std.HashMap.ofList ∘ List.map (Prod.map id f) ∘ Std.HashMap.toList
 
+def s₁ := Std.HashMap.ofList [("x", T.int), ("y", T.bool)]
+
+def s₂ := Std.HashMap.ofList [("x", T.bool), ("z", T.bool)]
+
+def Subst.union (s1 : Subst) (s1' : Subst) := Std.HashMap.fold (Std.HashMap.insert) s1' s1
+
+def Subst.c (s1 : Subst) (s1' : Subst) :=
+  Subst.map (λ t => t.apply s1) s1'
+
 def Subst.compose (s1 s2 : Subst) : Subst :=
-  let s1' := Subst.map (λ t => t.apply s2) s1
-  Std.HashMap.mergeWith (λ _ x _ => x) s1' s2
+  let s1' := Subst.map (λ t => t.apply s1) s2
+  Std.HashMap.fold (Std.HashMap.insert) s1' s1
+
+instance : Repr Subst where
+  reprPrec n := reprPrec n.toList
 
 structure TypeEnv where
   vars : Std.HashMap String Scheme
@@ -173,30 +196,68 @@ def varBind : String → T → TI Subst := λ u t => do
   else if u ∈ t.ftv then throw "occurs check fails"
   else pure $ Std.HashMap.ofList [(u, t)]
 
+mutual
+partial def mguList : List T → List T → TI Subst
+| [], [] => pure {}
+| x :: xs, y :: ys => do
+  let s1 ← mgu x y
+  let s2 ← mguList (xs.map (λ x' => x'.apply s1)) (ys.map (λ y' => y'.apply s1))
+  pure $ s1.compose s2
+| args₁, args₂ => throw ("types do not unify: " ++ toString args₁ ++ " vs. " ++ toString args₂)
+
+
 partial def mgu : T → T → TI Subst
--- | T.func args1 ret1, T.func args2 ret2 => do
---   let s1 ← List.zip args1 args2 |>.mapM (λ (x, y) => mgu x y)
---   let s2 ← mgu ret1 ret2
---   pure $ s1.foldl Subst.compose s2
+| T.func' args1 ret₁, T.func' args2 ret₂ => do
+  if args1.length != args2.length
+    then throw ("types do not unify: " ++ toString args1 ++ " vs. " ++ toString args2)
+  let s₁ ← mguList args1 args2
+  let s₂ ← mgu (ret₁.apply s₁) (ret₂.apply s₁)
+  pure $ s₁.compose s₂
 | T.func arg₁ ret₁, T.func arg₂ ret₂ => do
   let s1 ← mgu arg₁ arg₂
-  let s2 ← mgu ret₁ ret₂
+  let s2 ← mgu (ret₁.apply s1) (ret₂.apply s1)
   pure $ Subst.compose s1 s2
 | T.var u, t => varBind u t
 | t, T.var u => varBind u t
+| T.oneOf ts, T.oneOf ts₁ =>
+  -- We let any intersection here pass. If there's any error, that's gonna be caught by the runtime.
+  if List.bagInter ts ts₁ == []
+    then throw $ "types do not unify: " ++ toString ts ++ " vs. " ++ toString ts₁
+    else pure {}
+| T.oneOf ts, t => if ts.contains t then pure {} else
+  throw $ "types do not unify: " ++ toString t ++ " is not one of " ++ toString ts
+| t, T.oneOf ts => if ts.contains t then pure {} else
+  throw $ "types do not unify: " ++ toString t ++ " is not one of " ++ toString ts
 | T.int, T.int => pure {}
 | T.bool, T.bool => pure {}
 | T.string, T.string => pure {}
+| T.unit, T.unit => pure {}
 | T.tuple (a, b), T.tuple (c, d) => do
   let s1 ← mgu a c
   let s2 ← mgu b d
   pure $ Subst.compose s1 s2
 | t1, t2 => throw $ "types do not unify: " ++ toString t1 ++ " vs. " ++ toString t2
+end
 
 def tiLit : Literal → TI (Subst × T)
 | Literal.int _ => pure ({}, T.int)
 | Literal.bool _ => pure ({}, T.bool)
 | Literal.string _ => pure ({}, T.string)
+
+partial def applyWhileDiff : List T → Subst → TI (List T) := λ ts s => do
+  let ts₁ ← ts.mapM (λ x => pure $ x.apply s)
+  if ts == ts₁
+    then pure ts
+    else applyWhileDiff ts₁ s
+
+mutual
+def tiList : TypeEnv → List Expr → TI (Subst × List T)
+| _, [] => pure ({}, [])
+| env, x :: xs => do
+  let (s1, t1) ← ti env x
+  let env' := env.apply s1
+  let (s2, t2) ← tiList env' xs
+  pure (s1.compose s2, t1 :: t2)
 
 def ti : TypeEnv → Expr → TI (Subst × T)
 | env, Expr.var x => match env.vars.find? x with
@@ -205,12 +266,47 @@ def ti : TypeEnv → Expr → TI (Subst × T)
     pure ({}, t)
   | none => throw $ "unbound variable: " ++ x
 | _, Expr.lit l => tiLit l
+| env, Expr.app' f args => do
+  let tv ← newTyVar "α"
+  let (s1, t1) ← ti env f
+  let env' := env.apply s1
+  let (s2, t2) ← tiList env' args
+  let s3 ← mgu (t1.apply s2) (T.func' t2 tv)
+  pure (s3.compose (s2.compose s1), tv.apply s3)
 | env, Expr.app e1 e2 => do
   let tv ← newTyVar "α"
   let (s1, t1) ← ti env e1
   let (s2, t2) ← ti (env.apply s1) e2
   let s3 ← mgu (t1.apply s2) (T.func t2 tv)
   pure (s3.compose (s2.compose s1), tv.apply s3)
+| env, Expr.func' args body => do
+  let env' := List.foldl (λ env x => Std.HashMap.erase env x) env.vars args
+  let argsTyVars ← args.mapM (λ _ => newTyVar "α")
+  let args' := List.zip args (List.map (Scheme.scheme []) argsTyVars)
+  let env'' := TypeEnv.mk <| Std.HashMap.mergeWith (λ _ x _ => x) env' (HashMap.ofList args')
+  let (s₁, t₁) ← ti env'' body
+  let args₂ ← applyWhileDiff argsTyVars s₁
+  pure (s₁, T.func' args₂ t₁)
+| env, Expr.func arg body => do
+  let tv ← newTyVar "α"
+  let env' := Std.HashMap.erase env.vars arg
+  let env'' := TypeEnv.mk <| Std.HashMap.mergeWith (λ _ x _ => x) env' (HashMap.ofList [(arg, Scheme.scheme [] tv)])
+  let (s1, t1) ← ti env'' body
+  pure (s1, T.func (tv.apply s1) t1)
+| env, Expr.op { left, right, op := BinOp.Add, .. } rightExpr leftExpr => do
+  let (sLeft, tLeft) ← ti env leftExpr
+  let env' := env.apply sLeft
+  let (sRight, tRight) ← ti env' rightExpr
+  let s₃ ← mgu (tLeft.apply sRight) left
+  let s₄ ← mgu (tRight.apply s₃) right
+  let result :=
+    match tLeft, tRight with
+    | T.int, T.int => T.int
+    | T.string, T.string => T.string
+    | T.int, T.string => T.string
+    | T.string, T.int => T.string
+    | _, _ => T.oneOf [T.int, T.string]
+  pure (((sLeft.compose sRight).compose s₃).compose s₄, result)
 | env, Expr.op { left, right, result, .. } rightExpr leftExpr => do
   let (sLeft, tLeft) ← ti env leftExpr
   let env' := env.apply sLeft
@@ -226,8 +322,8 @@ def ti : TypeEnv → Expr → TI (Subst × T)
   let (s3, t3) ← ti env' then_
   let env'' := env'.apply s3
   let (s4, t4) ← ti env'' else_
-  let s5 ← mgu t3 t4
-  pure ((((s1.compose s₂).compose s3).compose s4).compose s5, t3.apply s5)
+  let t := (t3.combine t4).apply s4
+  pure (((s1.compose s₂).compose s3).compose s4, t)
 | env, Expr.tuple (fst, snd) => do
   let (s1, t1) ← ti env fst
   let env' := env.apply s1
@@ -242,20 +338,15 @@ def ti : TypeEnv → Expr → TI (Subst × T)
   let s₂ ← mgu t (T.tuple (T.var "t₀", T.var "t₁"))
   pure (s.compose s₂, T.var "t₁")
 | _, Expr.print _ => do
-  pure ({}, T.int)
+  pure ({}, T.unit)
 | env, Expr.let' x e1 e2 => do
   let (s1, t1) ← ti env e1
   let env' := env.apply s1
   let t' := generalize env' t1
   let (s2, t2) ← ti (env'.insert x t') e2
   pure (s1.compose s2, t2)
-| env, Expr.func arg body => do
-  let tv ← newTyVar "α"
-  let env' := Std.HashMap.erase env.vars arg
-  -- let argsMap := TypeEnv.mk <| args.foldl (λ env x => env.insert x (Scheme.scheme [] tv)) Std.HashMap.empty
-  let env'' := TypeEnv.mk <| Std.HashMap.mergeWith (λ _ x _ => x) env' (HashMap.ofList [(arg, Scheme.scheme [] tv)])
-  let (s1, t1) ← ti env'' body
-  pure (s1, T.func (tv.apply s1) t1)
+
+end
 
 def typeInference : Std.HashMap String Scheme → Expr → TI T := λ env e => do
   let (s, t) ← ti (TypeEnv.mk env) e
@@ -265,7 +356,16 @@ open Expr
 open Literal
 open BinOp
 
+def toTyped : BinOp → TypedBinOp := TypedBinOp.fromBinOp
+
 def e0 := let' "id" (func "x" (var "x")) (var "id")
+def e₀ := let' "id" (func' ["x"] (var "x")) (var "id")
+def e₁ := let' "id" (func' ["x", "y"] (op (toTyped BinOp.Eq) (lit (int 2)) (var "x"))) (var "id")
+def e₂ := let' "id" (func' ["x", "y"] (op (toTyped BinOp.Add) (lit (int 2)) (var "x"))) (var "id")
+def e₃ := let' "fn" (func' ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (var "fn")
+def e₄ := let' "fn" (func' ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (app' (var "fn") [lit (int 1), lit (string "me")])
+def e0applied := app (func "x" (var "x")) (lit (int 1))
+def e1 := let' "sum" (func "x" (op (toTyped Eq) (var "x") (lit (int 1)))) (var "sum")
 def add := let' "one" (lit (int 1)) <| app (let' "add" (func "y" (var "one")) (var "add")) (lit (int 2))
 def one := lit (int 1)
 def two := lit (int 2)
@@ -278,15 +378,29 @@ def test : Expr → IO Unit := λ e => do
   | Except.ok t => IO.println t
   | Except.error e => IO.println e
 
-def toTyped : BinOp → TypedBinOp := TypedBinOp.fromBinOp
+def oneOf := (if_ (lit (bool true)) one str)
+def t := tuple (one, e0)
 
-#eval test add
-#eval test (op (toTyped Eq) one str)
-#eval test (if_ (lit (bool true)) one str)
-#eval test (print str)
+#eval test e₀
+#eval test (app' e₀ [one])
+#eval test e₁
+#eval test e₂
+#eval test e₃
+#eval test e₄
+#eval test (app' e₂ [one, two])
+#eval test e0
+#eval test e0applied
+#eval test (app e0 one)
+#eval test e1
+#eval test (op (toTyped Add) one oneOf)
+#eval test (op (toTyped Add) one two)
+#eval test (op (toTyped Add) str two)
+#eval test (op (toTyped Add) two str)
+#eval test (op (toTyped Add) str str)
+#eval test (oneOf)
+#eval test (print oneOf)
 #eval test (let' "id" (lit (int 1)) (var "id"))
 #eval test (tuple (one, e0))
-def t := tuple (one, e0)
 #eval test (fst t)
 #eval test (fst one)
 #eval test (snd t)

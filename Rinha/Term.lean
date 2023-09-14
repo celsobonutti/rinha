@@ -52,22 +52,6 @@ inductive Term
 | Var : String → Term
 deriving Repr, BEq
 
-def may_be_bool : Term → Prop
-| Term.Boolean _ => true
-| Term.If {then', otherwise, ..} => may_be_bool then' ∨ may_be_bool otherwise
-| Term.Function {value, ..} => may_be_bool value
-| Term.First (Term.Tuple lhs _) => may_be_bool lhs
-| Term.Second (Term.Tuple _ rhs) => may_be_bool rhs
-| _ => false
-
-def may_be_int : Term → Prop
-| Term.Int _ => true
-| Term.If {then', otherwise, ..} => may_be_bool then' ∨ may_be_bool otherwise
-| Term.Function {value, ..} => may_be_bool value
-| Term.First (Term.Tuple lhs _) => may_be_bool lhs
-| Term.Second (Term.Tuple _ rhs) => may_be_bool rhs
-| _ => false
-
 instance : Coe α (Except String α) where
   coe x := Except.ok x
 
