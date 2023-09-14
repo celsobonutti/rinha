@@ -69,7 +69,23 @@ inductive Expr where
 | tuple : (Expr × Expr) → Expr
 | fst : Expr → Expr
 | snd : Expr → Expr
-deriving Repr, BEq
+deriving Repr, BEq, Inhabited
+
+partial def Expr.ofTerm : Term → Expr
+| Term.Int x => Expr.lit (Literal.int x)
+| Term.Boolean x => Expr.lit (Literal.bool x)
+| Term.Str x => Expr.lit (Literal.string x)
+| Term.Var x => Expr.var x
+| Term.Call f args => Expr.app (Expr.ofTerm f) (args.map Expr.ofTerm)
+| Term.Print t => Expr.print (Expr.ofTerm t)
+| Term.Tuple a b => Expr.tuple (Expr.ofTerm a, Expr.ofTerm b)
+| Term.First t => Expr.fst (Expr.ofTerm t)
+| Term.Second t => Expr.snd (Expr.ofTerm t)
+| Term.Function { parameters, value } => Expr.func (parameters.map (·.value)) (Expr.ofTerm value)
+| Term.Let { name, value, next } => Expr.let_ name.value (Expr.ofTerm value) (Expr.ofTerm next)
+| Term.If { condition, consequent, alternative } => Expr.if_ (Expr.ofTerm condition) (Expr.ofTerm consequent) (Expr.ofTerm alternative)
+| Term.Binary binop => Expr.op (TypedBinOp.fromBinOp binop.op) (Expr.ofTerm binop.lhs) (Expr.ofTerm binop.rhs)
+
 
 instance : ToString T where
   toString := reprStr
@@ -310,11 +326,16 @@ def ti : TypeEnv → Expr → TI (Subst × T)
   let (s, t) ← ti env expr
   pure (s, t)
 | env, Expr.let_ x e₁ e₂ => do
-  let (s₁, t₁) ← ti env e₁
-  let env₁ := env.apply s₁
-  let t₂ := generalize env₁ t₁
-  let (s₃, t₃) ← ti (env₁.insert x t₂) e₂
-  pure (s₁.compose s₃, t₃)
+  let tv ← newTyVar "α"
+  let env₁ := env.insert x (Scheme.scheme [] tv)
+  let (s₁, t₁) ← ti env₁ e₁
+  let s' ← mgu (t₁.apply s₁) tv
+  IO.println s'.toList
+  let env₂ := env₁.apply s'
+  let scheme := generalize env₂ t₁
+  IO.println <| ("scheme: " ++ reprStr scheme)
+  let (s₂, t₂) ← ti (env₂.insert x scheme) e₂
+  pure (s₁.compose s₂, t₂)
 
 end
 
@@ -328,14 +349,13 @@ open BinOp
 
 def toTyped : BinOp → TypedBinOp := TypedBinOp.fromBinOp
 
-def e0 := let_ "id" (func ["x"] (var "x")) (var "id")
 def e₀ := let_ "id" (func ["x"] (var "x")) (var "id")
 def e₁ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Eq) (lit (int 2)) (var "x"))) (var "id")
 def e₂ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Add) (lit (int 2)) (var "x"))) (var "id")
 def e₃ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (var "fn")
 def e₄ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (app (var "fn") [lit (int 1), lit (string "me")])
-def e0applied := app (func ["x"] (var "x")) [lit (int 1)]
 def e₅ := let_ "sum" (func ["x"] (op (toTyped Eq) (var "x") (lit (int 1)))) (var "sum")
+def e₆ := let_ "count_down" (func ["x"] (if_ (op (toTyped BinOp.Lt) (var "x") (lit (int 0))) (lit (int 0)) (app (var "count_down") [op (toTyped BinOp.Sub) (var "x") (lit (int 1))]))) (var "count_down")
 def add := let_ "one" (lit (int 1)) <| app (let_ "add" (func ["y"] (var "one")) (var "add")) [lit (int 2)]
 def one := lit (int 1)
 def two := lit (int 2)
@@ -349,7 +369,7 @@ def test : Expr → IO Unit := λ e => do
   | Except.error e => IO.println e
 
 def oneOf := (if_ (lit (bool true)) one str)
-def t := tuple (one, e0)
+def t := tuple (one, e₀)
 
 #eval test e₀
 #eval test (app e₀ [one])
@@ -359,10 +379,8 @@ def t := tuple (one, e0)
 #eval test e₃
 #eval test ((op (toTyped BinOp.Eq) (lit (int 2)) (lit (string "oof"))))
 #eval test e₄
+#eval test e₆
 #eval test (app e₂ [one, two])
-#eval test e0
-#eval test e0applied
-#eval test (app e0 [one])
 #eval test e₁
 #eval test (op (toTyped Add) one oneOf)
 #eval test (op (toTyped Add) one two)
@@ -372,7 +390,7 @@ def t := tuple (one, e0)
 #eval test (oneOf)
 #eval test (print oneOf)
 #eval test (let_ "id" (lit (int 1)) (var "id"))
-#eval test (tuple (one, e0))
+#eval test t
 #eval test (fst t)
 #eval test (fst one)
 #eval test (snd t)

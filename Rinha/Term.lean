@@ -10,7 +10,7 @@ structure WithLocation (α : Type) where
   value : α
 deriving Repr, BEq, DecidableEq
 
-structure Binary (α : Type) where
+structure Binary' (α : Type) where
   lhs : α
   rhs : α
   op : BinOp
@@ -19,7 +19,7 @@ deriving Repr, BEq, DecidableEq
 def Parameter := WithLocation String
 deriving Repr, BEq, DecidableEq
 
-structure Function (α : Type) where
+structure Function' (α : Type) where
   parameters : List Parameter
   value : α
 deriving Repr, BEq, DecidableEq
@@ -32,8 +32,8 @@ deriving Repr, BEq, DecidableEq
 
 structure If' (α : Type) where
   condition : α
-  then' : α
-  otherwise : α
+  consequent : α
+  alternative : α
 deriving Repr, BEq, DecidableEq
 
 inductive Term
@@ -41,8 +41,8 @@ inductive Term
 | Str : String → Term
 | Boolean : Bool → Term
 | Call : Term → List Term → Term
-| Function : Function Term → Term
-| Binary : Binary Term → Term
+| Function : Function' Term → Term
+| Binary : Binary' Term → Term
 | Let : Let' Term → Term
 | If : If' Term → Term
 | Print : Term → Term
@@ -144,11 +144,11 @@ partial def Term.from_JSON : JSON → Except String Term
     | _, _, _ => Except.error "expected a let binding"
   | "If" =>
     match fields["condition"]?, fields["then"]?, fields["otherwise"]? with
-    | Option.some condition, Option.some then', Option.some otherwise => do
+    | Option.some condition, Option.some consequent, Option.some otherwise => do
       let condition ← from_JSON condition
-      let then' ← from_JSON then'
-      let otherwise ← from_JSON otherwise
-      Term.If {condition, then', otherwise}
+      let consequent ← from_JSON consequent
+      let alternative ← from_JSON otherwise
+      Term.If {condition, consequent, alternative}
     | Option.none, _, _ => Except.error "expected a condition"
     | _, Option.none, _ => Except.error "expected a then branch"
     | _, _, Option.none => Except.error "expected an otherwise branch"
