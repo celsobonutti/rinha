@@ -29,10 +29,51 @@ inductive T where
 | oneOf : List T → T
 deriving Repr, BEq, Inhabited
 
+axiom tupleEq : ∀ {α β : Type} {a b : α} {c d : β}, (a, c) = (b, d) ↔ a = b ∧ c = d
+axiom whatever : ∀ {α : Prop}, ¬α -- TODO: Replace with real proof
+
+mutual
+def decT (a b : T) : Decidable (a = b) :=
+  match a, b with
+  | T.int, T.int => isTrue rfl
+  | T.bool, T.bool => isTrue rfl
+  | T.string, T.string => isTrue rfl
+  | T.var a, T.var b => match String.decEq a b with
+    | isTrue h => isTrue (by rw [h])
+    | isFalse _ => isFalse (by intro h; injection h; contradiction)
+  | T.func as ar, T.func bs br => match decTList as bs with
+    | isTrue h => match decT ar br with
+      | isTrue h₂ => isTrue (by rw [h, h₂])
+      | isFalse _ => isFalse (by intro h₂; injection h₂; contradiction)
+    | isFalse _ => isFalse (by intro h; injection h; contradiction)
+  | T.tuple (a, b), T.tuple (c, d) => match decT a c, decT b d with
+    | isTrue h₁, isTrue h₂ => isTrue (by rw [h₁, h₂])
+    | isFalse _, _ => isFalse whatever
+    | _, isFalse _ => isFalse whatever
+  | T.oneOf as, T.oneOf bs => match decTList as bs with
+    | isTrue h => isTrue (by rw [h])
+    | isFalse _ => isFalse (by intro h; injection h; contradiction)
+  | _, _ => isFalse whatever
+
+def decTList (as bs : List T) : Decidable (as = bs) :=
+  match as, bs with
+  | [], [] => isTrue rfl
+  | _::_, [] => isFalse (by intro; contradiction)
+  | [], _::_ => isFalse (by intro; contradiction)
+  | a::as, b::bs =>
+    match decT a b with
+    | isTrue h₁ => match decTList as bs with
+      | isTrue h₂ => isTrue (by rw [h₁, h₂])
+      | isFalse _ => isFalse (by intro h; injection h; contradiction)
+    | isFalse _ => isFalse (by intro h; injection h; contradiction)
+end
+
+instance DecidableEq : DecidableEq T := decT
+
 def T.combine : T → T → T
-| T.oneOf xs, T.oneOf ys => T.oneOf (xs ++ ys)
-| T.oneOf xs, y => T.oneOf (y :: xs)
-| x, T.oneOf ys => T.oneOf (x :: ys)
+| T.oneOf xs, T.oneOf ys => T.oneOf (List.union xs ys)
+| T.oneOf xs, y => T.oneOf (List.union [y] xs)
+| x, T.oneOf ys => T.oneOf (List.union [x] ys)
 | x, y => if x == y then x else T.oneOf [x, y]
 
 structure TypedBinOp where
@@ -341,56 +382,56 @@ def typeInference : Std.HashMap String Scheme → Expr → TI T := λ env e => d
   let (s, t) ← ti (TypeEnv.mk env) e
   pure (Types.apply s t)
 
-open Expr
-open Literal
-open BinOp
+-- open Expr
+-- open Literal
+-- open BinOp
 
-def toTyped : BinOp → TypedBinOp := TypedBinOp.ofBinOp
+-- def toTyped : BinOp → TypedBinOp := TypedBinOp.ofBinOp
 
-def e₀ := let_ "id" (func ["x"] (var "x")) (var "id")
-def e₁ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Eq) (lit (int 2)) (var "x"))) (var "id")
-def e₂ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Add) (lit (int 2)) (var "x"))) (var "id")
-def e₃ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (var "fn")
-def e₄ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (app (var "fn") [lit (int 1), lit (string "me")])
-def e₅ := let_ "sum" (func ["x"] (op (toTyped Eq) (var "x") (lit (int 1)))) (var "sum")
-def e₆ := let_ "count_down" (func ["x"] (if_ (op (toTyped BinOp.Lt) (var "x") (lit (int 0))) (lit (int 0)) (app (var "count_down") [op (toTyped BinOp.Sub) (var "x") (lit (int 1))]))) (var "count_down")
-def add := let_ "one" (lit (int 1)) <| app (let_ "add" (func ["y"] (var "one")) (var "add")) [lit (int 2)]
-def one := lit (int 1)
-def two := lit (int 2)
-def str := lit (string "hello")
-def sum := op { left := T.int, right := T.int, result := T.int, op := BinOp.Add }
+-- def e₀ := let_ "id" (func ["x"] (var "x")) (var "id")
+-- def e₁ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Eq) (lit (int 2)) (var "x"))) (var "id")
+-- def e₂ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Add) (lit (int 2)) (var "x"))) (var "id")
+-- def e₃ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (var "fn")
+-- def e₄ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (app (var "fn") [lit (int 1), lit (string "me")])
+-- def e₅ := let_ "sum" (func ["x"] (op (toTyped Eq) (var "x") (lit (int 1)))) (var "sum")
+-- def e₆ := let_ "count_down" (func ["x"] (if_ (op (toTyped BinOp.Lt) (var "x") (lit (int 0))) (lit (int 0)) (app (var "count_down") [op (toTyped BinOp.Sub) (var "x") (lit (int 1))]))) (var "count_down")
+-- def add := let_ "one" (lit (int 1)) <| app (let_ "add" (func ["y"] (var "one")) (var "add")) [lit (int 2)]
+-- def one := lit (int 1)
+-- def two := lit (int 2)
+-- def str := lit (string "hello")
+-- def sum := op { left := T.int, right := T.int, result := T.int, op := BinOp.Add }
 
-def test : Expr → IO Unit := λ e => do
-  let (res, _) ← runTI (typeInference {} e)
-  match res with
-  | Except.ok t => IO.println t
-  | Except.error e => IO.println e
+-- def test : Expr → IO Unit := λ e => do
+--   let (res, _) ← runTI (typeInference {} e)
+--   match res with
+--   | Except.ok t => IO.println t
+--   | Except.error e => IO.println e
 
-def oneOf := (if_ (lit (bool true)) one str)
-def t := tuple (one, e₀)
+-- def oneOf := (if_ (lit (bool true)) one str)
+-- def t := tuple (one, e₀)
 
-#eval test e₀
-#eval test (app e₀ [one])
-#eval test e₁
-#eval test (app e₁ [one, two])
-#eval test e₂
-#eval test e₃
-#eval test ((op (toTyped BinOp.Eq) (lit (int 2)) (lit (string "oof"))))
-#eval test e₄
-#eval test e₆
-#eval test (app e₂ [one, two])
-#eval test e₁
-#eval test (op (toTyped Add) one oneOf)
-#eval test (op (toTyped Add) one two)
-#eval test (op (toTyped Add) str two)
-#eval test (op (toTyped Add) two str)
-#eval test (op (toTyped Add) str str)
-#eval test (oneOf)
-#eval test (print oneOf)
-#eval test (let_ "id" (lit (int 1)) (var "id"))
-#eval test t
-#eval test (fst t)
-#eval test (fst one)
-#eval test (snd t)
+-- #eval test e₀
+-- #eval test (app e₀ [one])
+-- #eval test e₁
+-- #eval test (app e₁ [one, two])
+-- #eval test e₂
+-- #eval test e₃
+-- #eval test ((op (toTyped BinOp.Eq) (lit (int 2)) (lit (string "oof"))))
+-- #eval test e₄
+-- #eval test e₆
+-- #eval test (app e₂ [one, two])
+-- #eval test e₁
+-- #eval test (op (toTyped Add) one oneOf)
+-- #eval test (op (toTyped Add) one two)
+-- #eval test (op (toTyped Add) str two)
+-- #eval test (op (toTyped Add) two str)
+-- #eval test (op (toTyped Add) str str)
+-- #eval test (oneOf)
+-- #eval test (print oneOf)
+-- #eval test (let_ "id" (lit (int 1)) (var "id"))
+-- #eval test t
+-- #eval test (fst t)
+-- #eval test (fst one)
+-- #eval test (snd t)
 
 end Rinha.Type

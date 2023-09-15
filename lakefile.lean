@@ -18,7 +18,7 @@ lean_lib JSON {
 
 }
 
-lean_exe rinha {
+lean_exe rinhac {
   root := `Main
 }
 
