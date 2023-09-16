@@ -76,6 +76,23 @@ def T.combine : T → T → T
 | x, T.oneOf ys => T.oneOf (List.union [x] ys)
 | x, y => if x == y then x else T.oneOf [x, y]
 
+def T.remove : T → T → T
+| T.oneOf xs, T.oneOf ys => T.oneOf (List.diff xs ys)
+| T.oneOf xs, y =>
+  match List.diff xs [y] with
+  | [] => panic! "oops"
+  | [x] => x
+  | xs => T.oneOf xs
+| x, T.oneOf ys =>
+  match List.diff ys [x] with
+  | [] => panic! "oops"
+  | [y] => y
+  | ys => T.oneOf ys
+| T.func args x, y => T.func args (x.remove y)
+| x, _ => x
+
+
+
 structure TypedBinOp where
   op : BinOp
   left : T
@@ -127,6 +144,25 @@ partial def Expr.ofTerm : Term → Expr
 | Term.If { condition, consequent, alternative } => Expr.if_ (Expr.ofTerm condition) (Expr.ofTerm consequent) (Expr.ofTerm alternative)
 | Term.Binary binop => Expr.op (TypedBinOp.ofBinOp binop.op) (Expr.ofTerm binop.lhs) (Expr.ofTerm binop.rhs)
 
+partial def detectRecursion : String → Expr → Bool
+| x, Expr.app p args => (p == Expr.var x) || args.any (detectRecursion x)
+| x, Expr.let_ y e₁ e₂ =>
+  if (y == x)
+  then false
+  else detectRecursion x e₁ || detectRecursion x e₂
+| x, Expr.func _ body => detectRecursion x body
+| x, Expr.op _ left right => detectRecursion x left || detectRecursion x right
+| x, Expr.if_ cond then_ else_ => detectRecursion x cond || detectRecursion x then_ || detectRecursion x else_
+| x, Expr.tuple (a, b) => detectRecursion x a || detectRecursion x b
+| x, Expr.fst e => detectRecursion x e
+| x, Expr.snd e => detectRecursion x e
+| x, Expr.print e => detectRecursion x e
+| _, Expr.var _ => false
+| _, Expr.lit _ => false
+
+partial def Expr.isRecursiveFunction : Expr → Bool
+| Expr.let_ name (Expr.func _ body) _ => detectRecursion name body
+| _ => false
 
 instance : ToString T where
   toString := reprStr
@@ -214,8 +250,9 @@ inductive TIEnv where
 
 structure TIState where
   tiSupply : Int
+  recursingOn : List String
 
-def TIState.init := TIState.mk 0
+def TIState.init := TIState.mk 0 {}
 
 abbrev TI (α : Type) := ExceptT String (ReaderT TIEnv (StateT TIState IO)) α
 
@@ -227,6 +264,14 @@ def newTyVar (prefix_ : String) : TI T := do
   let s ← get
   set { s with tiSupply := s.tiSupply + 1  }
   pure $ T.var (prefix_ ++ toString s.tiSupply)
+
+def newRecursion (funcName : String) : TI String := do
+  let s ← get
+  if s.recursingOn.contains funcName
+    then throw "cannot shadow a recursive function"
+    else do
+      set { s with recursingOn := s.recursingOn.insert funcName }
+      pure funcName
 
 def instantiate : Scheme → TI T
 | Scheme.scheme vars t => do
@@ -297,21 +342,36 @@ def tiList : TypeEnv → List Expr → TI (Subst × List T)
   let (s₂, t₂) ← tiList env₁ xs
   pure (s₁.compose s₂, t₁ :: t₂)
 
-def ti : TypeEnv → Expr → TI (Subst × T)
-| env, Expr.var x => match env.vars.find? x with
+def ti (env : TypeEnv) : Expr → TI (Subst × T)
+| Expr.var x => do
+  match env.vars.find? x with
   | some s => do
     let t ← instantiate s
     pure ({}, t)
   | none => throw $ "unbound variable: " ++ x
-| _, Expr.lit l => tiLit l
-| env, Expr.app f args => do
-  let tv ← newTyVar "α"
-  let (s₁, t₁) ← ti env f
-  let env₁ := env.apply s₁
-  let (s₂, t₂) ← tiList env₁ args
-  let s₃ ← mgu (t₁.apply s₂) (T.func t₂ tv)
-  pure (Subst.composeMany [s₃, s₂, s₁], tv.apply s₃)
-| env, Expr.func args body => do
+| Expr.lit l => tiLit l
+| Expr.app f args => do
+  match f with
+  | Expr.var x =>
+    let { recursingOn, .. } ← get
+    if x ∈ recursingOn
+      then
+        pure ({}, T.var (x ++ "call"))
+      else
+        let tv ← newTyVar "α"
+        let (s₁, t₁) ← ti env f
+        let env₁ := env.apply s₁
+        let (s₂, t₂) ← tiList env₁ args
+        let s₃ ← mgu (t₁.apply s₂) (T.func t₂ tv)
+        pure (Subst.composeMany [s₃, s₂, s₁], tv.apply s₃)
+  | _ =>
+    let tv ← newTyVar "α"
+    let (s₁, t₁) ← ti env f
+    let env₁ := env.apply s₁
+    let (s₂, t₂) ← tiList env₁ args
+    let s₃ ← mgu (t₁.apply s₂) (T.func t₂ tv)
+    pure (Subst.composeMany [s₃, s₂, s₁], tv.apply s₃)
+| Expr.func args body => do
   let env₁ := List.foldl (λ env x => Std.HashMap.erase env x) env.vars args
   let argsTyVars ← args.mapM (λ _ => newTyVar "α")
   let args₁ := List.zip args (List.map (Scheme.scheme []) argsTyVars)
@@ -319,7 +379,7 @@ def ti : TypeEnv → Expr → TI (Subst × T)
   let (s₁, t₁) ← ti env₂ body
   let args₂ ← applyWhileDiff argsTyVars s₁
   pure (s₁, T.func args₂ t₁)
-| env, Expr.op { left, right, op := BinOp.Add, .. } rightExpr leftExpr => do
+| Expr.op { left, right, op := BinOp.Add, .. } rightExpr leftExpr => do
   let (sLeft, tLeft) ← ti env leftExpr
   let s₁ ← mgu (tLeft.apply sLeft) left
   let right₁ := right.apply s₁
@@ -333,7 +393,7 @@ def ti : TypeEnv → Expr → TI (Subst × T)
     | T.string, _ => T.string
     | _, _ => T.oneOf [T.int, T.string]
   pure (Subst.composeMany [s₂, sRight, s₁, sLeft], result)
-| env, Expr.op { left, right, result, .. } leftExpr rightExpr => do
+| Expr.op { left, right, result, .. } leftExpr rightExpr => do
   let (sLeft, tLeft) ← ti env leftExpr
   let s₁ ← mgu (tLeft.apply sLeft) left
   let right₁ := right.apply s₁
@@ -341,7 +401,7 @@ def ti : TypeEnv → Expr → TI (Subst × T)
   let (sRight, tRight) ← ti env₁ rightExpr
   let s₂ ← mgu (tRight.apply sRight) right₁
   pure (Subst.composeMany [s₂, sRight, s₁, sLeft], result)
-| env, Expr.if_ cond then_ else_ => do
+| Expr.if_ cond then_ else_ => do
   let (s₁, t₁) ← ti env cond
   let s₂ ← mgu t₁ T.bool
   let env₁ := env.apply s₂
@@ -350,75 +410,92 @@ def ti : TypeEnv → Expr → TI (Subst × T)
   let (s₄, t₄) ← ti env₂ else_
   let t := (t₃.combine t₄).apply s₄
   pure (Subst.composeMany [s₄, s₃, s₂, s₁], t)
-| env, Expr.tuple (fst, snd) => do
+| Expr.tuple (fst, snd) => do
   let (s₁, t₁) ← ti env fst
   let env₁ := env.apply s₁
   let (s₂, t₂) ← ti env₁ snd
   pure (s₂.compose s₁, T.tuple (t₁, t₂))
-| env, Expr.fst e => do
+| Expr.fst e => do
   let (s, t) ← ti env e
   let s₂ ← mgu t (T.tuple (T.var "t₀", T.var "t₁"))
   pure (s₂.compose s, T.var "t₀")
-| env, Expr.snd e => do
+| Expr.snd e => do
   let (s, t) ← ti env e
   let s₂ ← mgu t (T.tuple (T.var "t₀", T.var "t₁"))
   pure (s₂.compose s, T.var "t₁")
-| env, Expr.print expr => do
+| Expr.print expr => do
   let (s, t) ← ti env expr
   pure (s, t)
-| env, Expr.let_ x e₁ e₂ => do
-  let tv ← newTyVar "α"
-  let env₁ := env.insert x (Scheme.scheme [] tv)
-  let (s₁, t₁) ← ti env₁ e₁
-  let s' ← mgu (t₁.apply s₁) tv
-  let env₂ := env₁.apply s'
-  let scheme := generalize env₂ t₁
-  let (s₂, t₂) ← ti (env₂.insert x scheme) e₂
-  pure (s₁.compose s₂, t₂)
-
+| f@(Expr.let_ name e₁ e₂) => do
+  if f.isRecursiveFunction
+    then do
+      let recName ← newRecursion name
+      let tv := T.var recName
+      let env₁ := env.insert name (Scheme.scheme [] tv)
+      let (s₁, t₁) ← ti env₁ e₁
+      let s' ← mgu (t₁.apply s₁) tv
+      let env₂ := env₁.apply s'
+      let scheme := generalize env₂ t₁
+      let (s₂, t₂) ← ti (env₂.insert name scheme) e₂
+      let x := env₁.vars.find? name
+      pure (s₁.compose s₂, t₂.remove (T.var (name ++ "call")))
+    else do
+      let (s₁, t₁) ← ti env e₁
+      let env₁ := env.apply s₁
+      let scheme := generalize env₁ t₁
+      let (s₂, t₂) ← ti (env₁.insert name scheme) e₂
+      pure (s₁.compose s₂, t₂)
 end
 
 def typeInference : Std.HashMap String Scheme → Expr → TI T := λ env e => do
   let (s, t) ← ti (TypeEnv.mk env) e
   pure (Types.apply s t)
 
--- open Expr
--- open Literal
--- open BinOp
+open Expr
+open Literal
+open T
+open BinOp
 
--- def toTyped : BinOp → TypedBinOp := TypedBinOp.ofBinOp
+def toTyped : BinOp → TypedBinOp := TypedBinOp.ofBinOp
 
--- def e₀ := let_ "id" (func ["x"] (var "x")) (var "id")
--- def e₁ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Eq) (lit (int 2)) (var "x"))) (var "id")
--- def e₂ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Add) (lit (int 2)) (var "x"))) (var "id")
--- def e₃ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (var "fn")
--- def e₄ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (app (var "fn") [lit (int 1), lit (string "me")])
--- def e₅ := let_ "sum" (func ["x"] (op (toTyped Eq) (var "x") (lit (int 1)))) (var "sum")
--- def e₆ := let_ "count_down" (func ["x"] (if_ (op (toTyped BinOp.Lt) (var "x") (lit (int 0))) (lit (int 0)) (app (var "count_down") [op (toTyped BinOp.Sub) (var "x") (lit (int 1))]))) (var "count_down")
--- def add := let_ "one" (lit (int 1)) <| app (let_ "add" (func ["y"] (var "one")) (var "add")) [lit (int 2)]
--- def one := lit (int 1)
--- def two := lit (int 2)
--- def str := lit (string "hello")
--- def sum := op { left := T.int, right := T.int, result := T.int, op := BinOp.Add }
+def e₀ := let_ "id" (func ["x"] (var "x")) (var "id")
+def e₁ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Eq) (lit (int 2)) (var "x"))) (var "id")
+def e₂ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Add) (lit (int 2)) (var "x"))) (var "id")
+def e₃ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (var "fn")
+def e₄ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (app (var "fn") [lit (int 1), lit (string "me")])
+def e₅ := let_ "sum" (func ["x"] (op (toTyped Eq) (var "x") (lit (int 1)))) (var "sum")
+def e₆ := let_ "count_down" (func ["x"] (if_ (op (toTyped BinOp.Lt) (var "x") (lit (int 0))) (lit (int 0)) (app (var "count_down") [op (toTyped BinOp.Sub) (var "x") (lit (int 1))]))) (var "count_down")
+def e₇ := let_ "x" (var "x") (var "x")
+def e₈ := if_ (lit (bool true)) (lit (int 1)) (if_ (lit (bool false)) (lit (string "memes")) (lit (bool true)))
+def add := let_ "one" (lit (int 1)) <| app (let_ "add" (func ["y"] (var "one")) (var "add")) [lit (int 2)]
+def one := lit (int 1)
+def two := lit (int 2)
+def str := lit (string "hello")
+def test_ := if_ (lit (bool true)) (let_ "x" (lit (int 1)) (var "x")) (var "x")
+def sum := op { left := T.int, right := T.int, result := T.int, op := BinOp.Add }
 
--- def test : Expr → IO Unit := λ e => do
---   let (res, _) ← runTI (typeInference {} e)
---   match res with
---   | Except.ok t => IO.println t
---   | Except.error e => IO.println e
+def test : Expr → IO Unit := λ e => do
+  let (res, _) ← runTI (typeInference {} e)
+  match res with
+  | Except.ok t => IO.println t
+  | Except.error e => IO.println e
 
--- def oneOf := (if_ (lit (bool true)) one str)
--- def t := tuple (one, e₀)
+def oneOf := (if_ (lit (bool true)) one str)
+def t := tuple (one, e₀)
 
--- #eval test e₀
--- #eval test (app e₀ [one])
--- #eval test e₁
--- #eval test (app e₁ [one, two])
--- #eval test e₂
--- #eval test e₃
--- #eval test ((op (toTyped BinOp.Eq) (lit (int 2)) (lit (string "oof"))))
--- #eval test e₄
--- #eval test e₆
+def t₁ := T.func [int] (T.oneOf [int, var "count_downcall"])
+
+#eval t₁.remove (T.var "count_downcall")
+
+#eval test e₀
+#eval test (app e₀ [one])
+#eval test e₁
+#eval test (app e₁ [one, two])
+#eval test e₂
+#eval test e₃
+#eval test ((op (toTyped BinOp.Eq) (lit (int 2)) (lit (string "oof"))))
+#eval test e₄
+#eval test e₆
 -- #eval test (app e₂ [one, two])
 -- #eval test e₁
 -- #eval test (op (toTyped Add) one oneOf)
