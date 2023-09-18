@@ -53,6 +53,6 @@
                           ((procedure? x) "<#closure>")
                           ((boolean? x) (if x "true" "false")))))
 
-(define println (lambda (x) (display (show x)) (newline) x))
+(define println (lambda (x) (display (show x)) x))
 
 (define (discard x) x (void))

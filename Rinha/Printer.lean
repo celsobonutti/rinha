@@ -22,11 +22,11 @@ inductive Output
 deriving Inhabited, Repr
 
 partial def Output.format : Output → Std.Format
-| Output.int i => nest 2 <| Std.Format.text <| toString i
-| Output.bool b =>nest 2 <|  Std.Format.text <| if b then "#t" else "#f"
-| Output.string s => nest 2 <| dquotes s
-| Output.symbol s => nest 2 <| Std.Format.text s
-| Output.list l => nest 2 <| Std.Format.group (Std.Format.paren <| Std.Format.joinSep (l.map Output.format) " ")
+| Output.int i => Std.Format.text <| toString i
+| Output.bool b => Std.Format.text <| if b then "#t" else "#f"
+| Output.string s => dquotes s
+| Output.symbol s => Std.Format.text s
+| Output.list l => Std.Format.group (Std.Format.paren <| Std.Format.joinSep (l.map Output.format) " ")
 
 partial def Output.toString : Output → String
 | Output.int i => ToString.toString i
