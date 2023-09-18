@@ -91,8 +91,6 @@ def T.remove : T → T → T
 | T.func args x, y => T.func args (x.remove y)
 | x, _ => x
 
-
-
 structure TypedBinOp where
   op : BinOp
   left : T
@@ -114,55 +112,6 @@ def TypedBinOp.ofBinOp : BinOp → TypedBinOp
 | BinOp.Gte => { op := BinOp.Gte, left := T.int, right := T.int, result := T.bool }
 | BinOp.And => { op := BinOp.And, left := T.bool, right := T.bool, result := T.bool }
 | BinOp.Or => { op := BinOp.Or, left := T.bool, right := T.bool, result := T.bool }
-
-inductive Expr where
-| var : String → Expr
-| lit : Literal → Expr
-| app : Expr → List Expr → Expr
-| func : List String → Expr → Expr
-| let_ : String → Expr → Expr → Expr
-| op : TypedBinOp → Expr → Expr → Expr
-| if_ : Expr → Expr → Expr → Expr
-| print : Expr → Expr
-| tuple : (Expr × Expr) → Expr
-| fst : Expr → Expr
-| snd : Expr → Expr
-deriving Repr, BEq, Inhabited
-
-partial def Expr.ofTerm : Term → Expr
-| Term.Int x => Expr.lit (Literal.int x)
-| Term.Boolean x => Expr.lit (Literal.bool x)
-| Term.Str x => Expr.lit (Literal.string x)
-| Term.Var x => Expr.var x
-| Term.Call f args => Expr.app (Expr.ofTerm f) (args.map Expr.ofTerm)
-| Term.Print t => Expr.print (Expr.ofTerm t)
-| Term.Tuple a b => Expr.tuple (Expr.ofTerm a, Expr.ofTerm b)
-| Term.First t => Expr.fst (Expr.ofTerm t)
-| Term.Second t => Expr.snd (Expr.ofTerm t)
-| Term.Function { parameters, value } => Expr.func (parameters.map (·.value)) (Expr.ofTerm value)
-| Term.Let { name, value, next } => Expr.let_ name.value (Expr.ofTerm value) (Expr.ofTerm next)
-| Term.If { condition, consequent, alternative } => Expr.if_ (Expr.ofTerm condition) (Expr.ofTerm consequent) (Expr.ofTerm alternative)
-| Term.Binary binop => Expr.op (TypedBinOp.ofBinOp binop.op) (Expr.ofTerm binop.lhs) (Expr.ofTerm binop.rhs)
-
-partial def detectRecursion : String → Expr → Bool
-| x, Expr.app p args => (p == Expr.var x) || args.any (detectRecursion x)
-| x, Expr.let_ y e₁ e₂ =>
-  if (y == x)
-  then false
-  else detectRecursion x e₁ || detectRecursion x e₂
-| x, Expr.func _ body => detectRecursion x body
-| x, Expr.op _ left right => detectRecursion x left || detectRecursion x right
-| x, Expr.if_ cond then_ else_ => detectRecursion x cond || detectRecursion x then_ || detectRecursion x else_
-| x, Expr.tuple (a, b) => detectRecursion x a || detectRecursion x b
-| x, Expr.fst e => detectRecursion x e
-| x, Expr.snd e => detectRecursion x e
-| x, Expr.print e => detectRecursion x e
-| _, Expr.var _ => false
-| _, Expr.lit _ => false
-
-partial def Expr.isRecursiveFunction : Expr → Bool
-| Expr.let_ name (Expr.func _ body) _ => detectRecursion name body
-| _ => false
 
 instance : ToString T where
   toString := reprStr
@@ -333,8 +282,9 @@ partial def applyWhileDiff : List T → Subst → TI (List T) := λ ts s => do
     then pure ts
     else applyWhileDiff ts₁ s
 
+open Term in
 mutual
-partial def tiList : TypeEnv → List Expr → TI (Subst × List T)
+partial def tiList : TypeEnv → List Term → TI (Subst × List T)
 | _, [] => pure ({}, [])
 | env, x :: xs => do
   let (s₁, t₁) ← ti env x
@@ -342,17 +292,19 @@ partial def tiList : TypeEnv → List Expr → TI (Subst × List T)
   let (s₂, t₂) ← tiList env₁ xs
   pure (s₁.compose s₂, t₁ :: t₂)
 
-partial def ti (env : TypeEnv) : Expr → TI (Subst × T)
-| Expr.var x => do
+partial def ti (env : TypeEnv) : Term → TI (Subst × T)
+| Var x => do
   match env.vars.find? x with
   | some s => do
     let t ← instantiate s
     pure ({}, t)
   | none => throw $ "unbound variable: " ++ x
-| Expr.lit l => tiLit l
-| Expr.app f args => do
+| Term.Int t => tiLit (Literal.int t)
+| Str t => tiLit (Literal.string t)
+| Boolean t => tiLit (Literal.bool t)
+| Call f args => do
   match f with
-  | Expr.var x =>
+  | Var x =>
     let { recursingOn, .. } ← get
     if x ∈ recursingOn
       then
@@ -371,82 +323,86 @@ partial def ti (env : TypeEnv) : Expr → TI (Subst × T)
     let (s₂, t₂) ← tiList env₁ args
     let s₃ ← mgu (t₁.apply s₂) (T.func t₂ tv)
     pure (Subst.composeMany [s₃, s₂, s₁], tv.apply s₃)
-| Expr.func args body => do
+| Function { parameters, value } => do
+  let args := parameters.map (·.value)
   let env₁ := List.foldl (λ env x => Std.HashMap.erase env x) env.vars args
   let argsTyVars ← args.mapM (λ _ => newTyVar "α")
   let args₁ := List.zip args (List.map (Scheme.scheme []) argsTyVars)
   let env₂ := TypeEnv.mk <| Std.HashMap.mergeWith (λ _ x _ => x) env₁ (HashMap.ofList args₁)
-  let (s₁, t₁) ← ti env₂ body
+  let (s₁, t₁) ← ti env₂ value
   let args₂ ← applyWhileDiff argsTyVars s₁
   pure (s₁, T.func args₂ t₁)
-| Expr.op { left, right, op := BinOp.Add, .. } rightExpr leftExpr => do
-  let (sLeft, tLeft) ← ti env leftExpr
-  let s₁ ← mgu (tLeft.apply sLeft) left
-  let right₁ := right.apply s₁
-  let env₁ := env.apply s₁
-  let (sRight, tRight) ← ti env₁ rightExpr
-  let s₂ ← mgu (tRight.apply sRight) right₁
-  let result :=
-    match tLeft, tRight with
-    | T.int, T.int => T.int
-    | _, T.string => T.string
-    | T.string, _ => T.string
-    | _, _ => T.oneOf [T.int, T.string]
-  pure (Subst.composeMany [s₂, sRight, s₁, sLeft], result)
-| Expr.op { left, right, result, .. } leftExpr rightExpr => do
-  let (sLeft, tLeft) ← ti env leftExpr
-  let s₁ ← mgu (tLeft.apply sLeft) left
-  let right₁ := right.apply s₁
-  let env₁ := env.apply s₁
-  let (sRight, tRight) ← ti env₁ rightExpr
-  let s₂ ← mgu (tRight.apply sRight) right₁
-  pure (Subst.composeMany [s₂, sRight, s₁, sLeft], result)
-| Expr.if_ cond then_ else_ => do
-  let (s₁, t₁) ← ti env cond
+| If { condition, consequent, alternative } => do
+  let (s₁, t₁) ← ti env condition
   let s₂ ← mgu t₁ T.bool
   let env₁ := env.apply s₂
-  let (s₃, t₃) ← ti env₁ then_
+  let (s₃, t₃) ← ti env₁ consequent
   let env₂ := env₁.apply s₃
-  let (s₄, t₄) ← ti env₂ else_
+  let (s₄, t₄) ← ti env₂ alternative
   let t := (t₃.combine t₄).apply s₄
   pure (Subst.composeMany [s₄, s₃, s₂, s₁], t)
-| Expr.tuple (fst, snd) => do
+| Tuple fst snd => do
   let (s₁, t₁) ← ti env fst
   let env₁ := env.apply s₁
   let (s₂, t₂) ← ti env₁ snd
   pure (s₂.compose s₁, T.tuple (t₁, t₂))
-| Expr.fst e => do
+| First e => do
   let (s, t) ← ti env e
   let s₂ ← mgu t (T.tuple (T.var "t₀", T.var "t₁"))
   pure (s₂.compose s, T.var "t₀")
-| Expr.snd e => do
+| Second e => do
   let (s, t) ← ti env e
   let s₂ ← mgu t (T.tuple (T.var "t₀", T.var "t₁"))
   pure (s₂.compose s, T.var "t₁")
-| Expr.print expr => do
+| Print expr => do
   let (s, t) ← ti env expr
   pure (s, t)
-| f@(Expr.let_ name e₁ e₂) => do
-  if f.isRecursiveFunction
+| f@(Let { name, value, next }) => do
+  let name := name.value
+  if Term.isRecursiveFunction f
     then do
       let recName ← newRecursion name
       let tv := T.var recName
       let env₁ := env.insert name (Scheme.scheme [] tv)
-      let (s₁, t₁) ← ti env₁ e₁
+      let (s₁, t₁) ← ti env₁ value
       let s' ← mgu (t₁.apply s₁) tv
       let env₂ := env₁.apply s'
       let scheme := generalize env₂ t₁
-      let (s₂, t₂) ← ti (env₂.insert name scheme) e₂
+      let (s₂, t₂) ← ti (env₂.insert name scheme) next
       pure (s₁.compose s₂, t₂.remove (T.var (name ++ "call")))
     else do
-      let (s₁, t₁) ← ti env e₁
+      let (s₁, t₁) ← ti env value
       let env₁ := env.apply s₁
       let scheme := generalize env₁ t₁
-      let (s₂, t₂) ← ti (env₁.insert name scheme) e₂
+      let (s₂, t₂) ← ti (env₁.insert name scheme) next
       pure (s₁.compose s₂, t₂)
+| Binary { lhs := leftExpr, rhs := rightExpr, op } =>
+  match TypedBinOp.ofBinOp op with
+  | { left, right, op := BinOp.Add, .. } => do
+    let (sLeft, tLeft) ← ti env leftExpr
+    let s₁ ← mgu (tLeft.apply sLeft) left
+    let right₁ := right.apply s₁
+    let env₁ := env.apply s₁
+    let (sRight, tRight) ← ti env₁ rightExpr
+    let s₂ ← mgu (tRight.apply sRight) right₁
+    let result :=
+      match tLeft, tRight with
+      | T.int, T.int => T.int
+      | _, T.string => T.string
+      | T.string, _ => T.string
+      | _, _ => T.oneOf [T.int, T.string]
+    pure (Subst.composeMany [s₂, sRight, s₁, sLeft], result)
+  | { left, right, result, .. } => do
+    let (sLeft, tLeft) ← ti env leftExpr
+    let s₁ ← mgu (tLeft.apply sLeft) left
+    let right₁ := right.apply s₁
+    let env₁ := env.apply s₁
+    let (sRight, tRight) ← ti env₁ rightExpr
+    let s₂ ← mgu (tRight.apply sRight) right₁
+    pure (Subst.composeMany [s₂, sRight, s₁, sLeft], result)
 end
 
-def typeInference : Std.HashMap String Scheme → Expr → TI T := λ env e => do
+def typeInference : Std.HashMap String Scheme → Term → TI T := λ env e => do
   let (s, t) ← ti (TypeEnv.mk env) e
   pure (Types.apply s t)
 

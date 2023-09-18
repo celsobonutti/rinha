@@ -180,4 +180,27 @@ def Program.from_JSON : JSON → Except String Program
   | _, _ => Except.error "expected a program"
 | _ => Except.error "expected a program"
 
+partial def Term.detectRecursion : String → Term → Bool
+| x, Term.Call p args => (p == Term.Var x) || args.any (detectRecursion x)
+| x, Term.Let { name, value, next } =>
+  if (name.value == x)
+  then false
+  else detectRecursion x value || detectRecursion x next
+| x, Term.Function { value, .. } => detectRecursion x value
+| x, Term.Binary { lhs, rhs, .. } => detectRecursion x lhs || detectRecursion x rhs
+| x, Term.If { condition, consequent, alternative } => List.foldl (· || detectRecursion x ·) false [condition, consequent, alternative]
+| x, Term.Tuple a b => detectRecursion x a || detectRecursion x b
+| x, Term.First e => detectRecursion x e
+| x, Term.Second e => detectRecursion x e
+| x, Term.Print e => detectRecursion x e
+| _, Term.Var _ => false
+| _, Term.Int _ => false
+| _, Term.Str _ => false
+| _, Term.Boolean _ => false
+
+partial def Term.isRecursiveFunction : Term → Bool
+| Term.Let { name, value := Term.Function { value, .. }, .. } =>
+  detectRecursion name.value value
+| _ => false
+
 end Rinha.Term

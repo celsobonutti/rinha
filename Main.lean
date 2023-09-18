@@ -19,8 +19,7 @@ def parseAndConvert (fileName : String) : IO Rinha.Term.Program := do
 
 def typeCheck (program : Rinha.Term.Program) : IO Unit := do
   let e := program.expression
-  let expr := Rinha.Type.Expr.ofTerm e
-  let (res, _) ← Rinha.Type.runTI (Rinha.Type.typeInference {} expr)
+  let (res, _) ← Rinha.Type.runTI (Rinha.Type.typeInference {} e)
   match res with
   | Except.ok _ => pure ()
   | Except.error e => IO.println e
