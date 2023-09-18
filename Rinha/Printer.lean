@@ -1,13 +1,17 @@
 import Rinha.Term
+import Init.Data.Format.Basic
 
 namespace Rinha.Printer
 
 open Rinha.Term
+open Std.Format
 
-def dquotes : String → String := ("\"" ++ · ++ "\"")
+def dquotes' : String → String := ("\"" ++ · ++ "\"")
+def dquotes : Std.Format → Std.Format := (bracket "\"" · "\"")
 def parens : String → String := ("(" ++ · ++ ")")
 def hcat : List String → String := String.intercalate " "
-def vcat : List String → String := String.intercalate "\n"
+def vcat' : List String → String := String.intercalate "\n"
+def vcat : List Std.Format → Std.Format := (Std.Format.joinSep · Std.Format.line)
 
 inductive Output
 | int : Int → Output
@@ -17,14 +21,23 @@ inductive Output
 | symbol : String → Output
 deriving Inhabited, Repr
 
+partial def Output.format : Output → Std.Format
+| Output.int i => nest 2 <| Std.Format.text <| toString i
+| Output.bool b =>nest 2 <|  Std.Format.text <| if b then "#t" else "#f"
+| Output.string s => nest 2 <| dquotes s
+| Output.symbol s => nest 2 <| Std.Format.text s
+| Output.list l => nest 2 <| Std.Format.group (Std.Format.paren <| Std.Format.joinSep (l.map Output.format) " ")
+
 partial def Output.toString : Output → String
 | Output.int i => ToString.toString i
 | Output.bool b => if b then "#t" else "#f"
-| Output.string s => dquotes s
+| Output.string s => dquotes' s
 | Output.symbol s => s
 | Output.list l => parens ∘ hcat <| Output.toString <$> l
 
 instance : ToString Output := ⟨Output.toString⟩
+
+instance : Std.ToFormat Output := ⟨Output.format⟩
 
 instance : Coe Bool Output := ⟨Output.bool⟩
 instance : Coe Int Output := ⟨Output.int⟩
@@ -42,12 +55,12 @@ macro_rules
   | `({$x, $xs:term,*}) => `(($x : Output) :: {$xs,*})
 
 def BinOp.toSchemeOp : BinOp → String
-| BinOp.Add => "+"
+| BinOp.Add => "sum"
 | BinOp.Sub => "-"
 | BinOp.Mul => "*"
 | BinOp.Div => "/"
 | BinOp.Rem => "%"
-| BinOp.Eq => "eq?"
+| BinOp.Eq => "safe-eq?"
 | BinOp.Neq => "neq?"
 | BinOp.Lt => "<"
 | BinOp.Lte => "<="
@@ -74,7 +87,10 @@ partial def Output.ofTerm : Term → Output
 | Term.Tuple fst snd => {"cons", Output.ofTerm fst, Output.ofTerm snd}
 | Term.First t => {"safe-car", Output.ofTerm t}
 | Term.Second t => {"safe-cdr", Output.ofTerm t}
-| Term.Print x => {"print", Output.ofTerm x}
+| Term.Print x => {"println", Output.ofTerm x}
 | Term.Binary ⟨lhs, rhs, op⟩ => {BinOp.toSchemeOp op, Output.ofTerm lhs, Output.ofTerm rhs}
+
+def discardTopLevel : Output → Output := λ x =>
+  { "discard", x }
 
 end Rinha.Printer

@@ -1,6 +1,9 @@
+import Init.Data.Format.Basic
 import Rinha
 import Init.Data.Repr
 import Init.System.FilePath
+
+open Rinha.Printer
 
 def parseWithIOError (value : String) : IO JSON := do
   match JSON.parse value with
@@ -25,15 +28,17 @@ def typeCheck (program : Rinha.Term.Program) : IO Unit := do
   | Except.error e => IO.println e
 
 def codegen (program : Rinha.Term.Program) : IO System.FilePath := do
-  let baseCode ← IO.FS.readFile "base.scm"
-  let fileName := (System.FilePath.mk program.name).withExtension "scm"
+  let baseCode ← IO.FS.readFile "base.rkt"
+  let fileName := (System.FilePath.mk program.name).withExtension "rkt"
   let file ← IO.FS.Handle.mk fileName IO.FS.Mode.write
   let e := program.expression
   let output :=
-    Rinha.Printer.vcat
-      [ baseCode
-      , Rinha.Printer.Output.ofTerm e |> ToString.toString
-      ]
+   Std.Format.pretty (Rinha.Printer.vcat
+      [ Std.Format.text baseCode
+      , ";; program"
+      , ""
+      , Rinha.Printer.Output.format <| Rinha.Printer.discardTopLevel (Rinha.Printer.Output.ofTerm e)
+      ]) 80
   file.putStr output
   pure fileName
 
@@ -60,10 +65,20 @@ def printRepr [Repr α] : α → IO Unit := IO.println ∘ repr
 def main : List String → IO Unit
 | [] => IO.eprintln "No file given"
 | [fileName] => do
-  let _ ← compile fileName
+  let outputFileName ← compile fileName
+  let io ← IO.Process.output { cmd := "raco", args := #["exe", outputFileName.toString] }
+  if io.exitCode == 0 then
+    IO.println s!"Compiled to {outputFileName}"
+  else
+    IO.eprintln s!"Compilation failed with exit code {io.exitCode}"
+    IO.eprintln io.stderr
   pure ()
 | ["--run", fileName] => do
   let outputFileName ← compile fileName
-  let output ← IO.Process.run { cmd := "scheme", args := #["--script", outputFileName.toString] }
-  IO.print output
+  let io ← IO.Process.output { cmd := "racket", args := #[outputFileName.toString] }
+  if io.exitCode == 0 then
+    IO.println io.stdout
+  else
+    IO.eprintln s!"Compilation failed with exit code {io.exitCode}"
+    IO.eprintln io.stderr
 | _ => IO.eprintln "Too many arguments"
