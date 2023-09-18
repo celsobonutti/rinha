@@ -89,7 +89,7 @@ partial def Term.from_JSON : JSON → Except String Term
     match fields["value"]? with
     | JSON.str s => Term.Str s
     | _ => Except.error "expected a string"
-  | "Boolean" =>
+  | "Bool" =>
     match fields["value"]? with
     | JSON.bool b => Term.Boolean b
     | _ => Except.error "expected a boolean"
@@ -162,7 +162,8 @@ partial def Term.from_JSON : JSON → Except String Term
     match fields["text"]? with
     | Option.some (JSON.str name) => Term.Var name
     | _ => Except.error "expected a variable"
-  | _ => Except.error "invalid Term kind"
+  | JSON.str k => Except.error ("invalid Term kind: " ++ k)
+  | _ => Except.error "invalid Term"
 | _ => Except.error "invalid JSON"
 
 structure Program where

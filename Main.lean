@@ -25,7 +25,7 @@ def typeCheck (program : Rinha.Term.Program) : IO Unit := do
   | Except.ok _ => pure ()
   | Except.error e => IO.println e
 
-def codegen (program : Rinha.Term.Program) : IO Unit := do
+def codegen (program : Rinha.Term.Program) : IO System.FilePath := do
   let baseCode ← IO.FS.readFile "base.scm"
   let fileName := (System.FilePath.mk program.name).withExtension "scm"
   let file ← IO.FS.Handle.mk fileName IO.FS.Mode.write
@@ -36,6 +36,7 @@ def codegen (program : Rinha.Term.Program) : IO Unit := do
       , Rinha.Printer.Output.ofTerm e |> ToString.toString
       ]
   file.putStr output
+  pure fileName
 
 inductive KindOfFile where
 | json
@@ -46,7 +47,7 @@ def System.FilePath.kindOfFile (path : System.FilePath) : KindOfFile :=
   | Option.some "json" => KindOfFile.json
   | _ => KindOfFile.rinha -- We'll try to compile anything else as a Rinha file
 
-def compile (path : System.FilePath) : IO Unit := do
+def compile (path : System.FilePath) : IO System.FilePath := do
   let rawJSON ← match path.kindOfFile with
     | KindOfFile.json => IO.FS.readFile path
     | KindOfFile.rinha => IO.Process.run { cmd := "rinha", args := #[path.toString] }
@@ -57,6 +58,13 @@ def compile (path : System.FilePath) : IO Unit := do
 
 def printRepr [Repr α] : α → IO Unit := IO.println ∘ repr
 
-def files : List System.FilePath := ["files/fib.rinha", "files/sum.json", "files/combination.json", "files/type-fail.rinha"]
-
-def main : IO Unit := files.mapM compile *> pure ()
+def main : List String → IO Unit
+| [] => IO.eprintln "No file given"
+| [fileName] => do
+  let _ ← compile fileName
+  pure ()
+| ["--run", fileName] => do
+  let outputFileName ← compile fileName
+  let output ← IO.Process.run { cmd := "scheme", args := #["--script", outputFileName.toString] }
+  IO.print output
+| _ => IO.eprintln "Too many arguments"

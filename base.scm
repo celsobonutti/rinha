@@ -14,4 +14,4 @@
                           ((pair? x) (show-pair x))
                           ((procedure? x) "<#closure>")
                           ((bool? x) (if x "true" "false")))))
-(define print (lambda (x) (display (show x)) newline x))
+(define print (lambda (x) (display (show x)) (newline) x))

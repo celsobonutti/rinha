@@ -80,12 +80,12 @@ def T.remove : T → T → T
 | T.oneOf xs, T.oneOf ys => T.oneOf (List.diff xs ys)
 | T.oneOf xs, y =>
   match List.diff xs [y] with
-  | [] => panic! "oops"
+  | [] => T.oneOf []
   | [x] => x
   | xs => T.oneOf xs
 | x, T.oneOf ys =>
   match List.diff ys [x] with
-  | [] => panic! "oops"
+  | [] => T.oneOf []
   | [y] => y
   | ys => T.oneOf ys
 | T.func args x, y => T.func args (x.remove y)
@@ -334,7 +334,7 @@ partial def applyWhileDiff : List T → Subst → TI (List T) := λ ts s => do
     else applyWhileDiff ts₁ s
 
 mutual
-def tiList : TypeEnv → List Expr → TI (Subst × List T)
+partial def tiList : TypeEnv → List Expr → TI (Subst × List T)
 | _, [] => pure ({}, [])
 | env, x :: xs => do
   let (s₁, t₁) ← ti env x
@@ -342,7 +342,7 @@ def tiList : TypeEnv → List Expr → TI (Subst × List T)
   let (s₂, t₂) ← tiList env₁ xs
   pure (s₁.compose s₂, t₁ :: t₂)
 
-def ti (env : TypeEnv) : Expr → TI (Subst × T)
+partial def ti (env : TypeEnv) : Expr → TI (Subst × T)
 | Expr.var x => do
   match env.vars.find? x with
   | some s => do
@@ -437,7 +437,6 @@ def ti (env : TypeEnv) : Expr → TI (Subst × T)
       let env₂ := env₁.apply s'
       let scheme := generalize env₂ t₁
       let (s₂, t₂) ← ti (env₂.insert name scheme) e₂
-      let x := env₁.vars.find? name
       pure (s₁.compose s₂, t₂.remove (T.var (name ++ "call")))
     else do
       let (s₁, t₁) ← ti env e₁
@@ -450,65 +449,5 @@ end
 def typeInference : Std.HashMap String Scheme → Expr → TI T := λ env e => do
   let (s, t) ← ti (TypeEnv.mk env) e
   pure (Types.apply s t)
-
-open Expr
-open Literal
-open T
-open BinOp
-
-def toTyped : BinOp → TypedBinOp := TypedBinOp.ofBinOp
-
-def e₀ := let_ "id" (func ["x"] (var "x")) (var "id")
-def e₁ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Eq) (lit (int 2)) (var "x"))) (var "id")
-def e₂ := let_ "id" (func ["x", "y"] (op (toTyped BinOp.Add) (lit (int 2)) (var "x"))) (var "id")
-def e₃ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (var "fn")
-def e₄ := let_ "fn" (func ["x", "y"] (op (toTyped BinOp.Eq) (var "y") (var "x"))) (app (var "fn") [lit (int 1), lit (string "me")])
-def e₅ := let_ "sum" (func ["x"] (op (toTyped Eq) (var "x") (lit (int 1)))) (var "sum")
-def e₆ := let_ "count_down" (func ["x"] (if_ (op (toTyped BinOp.Lt) (var "x") (lit (int 0))) (lit (int 0)) (app (var "count_down") [op (toTyped BinOp.Sub) (var "x") (lit (int 1))]))) (var "count_down")
-def e₇ := let_ "x" (var "x") (var "x")
-def e₈ := if_ (lit (bool true)) (lit (int 1)) (if_ (lit (bool false)) (lit (string "memes")) (lit (bool true)))
-def add := let_ "one" (lit (int 1)) <| app (let_ "add" (func ["y"] (var "one")) (var "add")) [lit (int 2)]
-def one := lit (int 1)
-def two := lit (int 2)
-def str := lit (string "hello")
-def test_ := if_ (lit (bool true)) (let_ "x" (lit (int 1)) (var "x")) (var "x")
-def sum := op { left := T.int, right := T.int, result := T.int, op := BinOp.Add }
-
-def test : Expr → IO Unit := λ e => do
-  let (res, _) ← runTI (typeInference {} e)
-  match res with
-  | Except.ok t => IO.println t
-  | Except.error e => IO.println e
-
-def oneOf := (if_ (lit (bool true)) one str)
-def t := tuple (one, e₀)
-
-def t₁ := T.func [int] (T.oneOf [int, var "count_downcall"])
-
-#eval t₁.remove (T.var "count_downcall")
-
-#eval test e₀
-#eval test (app e₀ [one])
-#eval test e₁
-#eval test (app e₁ [one, two])
-#eval test e₂
-#eval test e₃
-#eval test ((op (toTyped BinOp.Eq) (lit (int 2)) (lit (string "oof"))))
-#eval test e₄
-#eval test e₆
--- #eval test (app e₂ [one, two])
--- #eval test e₁
--- #eval test (op (toTyped Add) one oneOf)
--- #eval test (op (toTyped Add) one two)
--- #eval test (op (toTyped Add) str two)
--- #eval test (op (toTyped Add) two str)
--- #eval test (op (toTyped Add) str str)
--- #eval test (oneOf)
--- #eval test (print oneOf)
--- #eval test (let_ "id" (lit (int 1)) (var "id"))
--- #eval test t
--- #eval test (fst t)
--- #eval test (fst one)
--- #eval test (snd t)
 
 end Rinha.Type

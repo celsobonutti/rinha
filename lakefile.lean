@@ -18,6 +18,7 @@ lean_lib JSON {
 
 }
 
+@[default_target]
 lean_exe rinhac {
   root := `Main
 }
