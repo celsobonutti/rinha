@@ -29,9 +29,6 @@ inductive T where
 | oneOf : List T → T
 deriving Repr, BEq, Inhabited
 
-axiom tupleEq : ∀ {α β : Type} {a b : α} {c d : β}, (a, c) = (b, d) ↔ a = b ∧ c = d
-axiom whatever : ∀ {α : Prop}, ¬α -- TODO: Replace with real proof
-
 mutual
 def decT (a b : T) : Decidable (a = b) :=
   match a, b with
@@ -46,14 +43,65 @@ def decT (a b : T) : Decidable (a = b) :=
       | isTrue h₂ => isTrue (by rw [h, h₂])
       | isFalse _ => isFalse (by intro h₂; injection h₂; contradiction)
     | isFalse _ => isFalse (by intro h; injection h; contradiction)
-  | T.tuple (a, b), T.tuple (c, d) => match decT a c, decT b d with
-    | isTrue h₁, isTrue h₂ => isTrue (by rw [h₁, h₂])
-    | isFalse _, _ => isFalse whatever
-    | _, isFalse _ => isFalse whatever
+  | T.tuple (a, b), T.tuple (c, d) =>
+    match decTTuple (a, b) (c, d) with
+    | isTrue h => isTrue (by rw [h])
+    | isFalse _ => isFalse (by intro h; injection h; contradiction)
   | T.oneOf as, T.oneOf bs => match decTList as bs with
     | isTrue h => isTrue (by rw [h])
     | isFalse _ => isFalse (by intro h; injection h; contradiction)
-  | _, _ => isFalse whatever
+  | T.int, T.bool => isFalse (by intro; contradiction)
+  | T.int, T.string => isFalse (by intro; contradiction)
+  | T.bool, T.int => isFalse (by intro; contradiction)
+  | T.bool, T.string => isFalse (by intro; contradiction)
+  | T.string, T.int => isFalse (by intro; contradiction)
+  | T.string, T.bool => isFalse (by intro; contradiction)
+  | T.var _, T.int => isFalse (by intro; contradiction)
+  | T.var _, T.bool => isFalse (by intro; contradiction)
+  | T.var _, T.string => isFalse (by intro; contradiction)
+  | T.func _ _, T.int => isFalse (by intro; contradiction)
+  | T.func _ _, T.bool => isFalse (by intro; contradiction)
+  | T.func _ _, T.string => isFalse (by intro; contradiction)
+  | T.tuple _, T.int => isFalse (by intro; contradiction)
+  | T.tuple _, T.bool => isFalse (by intro; contradiction)
+  | T.tuple _, T.string => isFalse (by intro; contradiction)
+  | T.oneOf _, T.int => isFalse (by intro; contradiction)
+  | T.oneOf _, T.bool => isFalse (by intro; contradiction)
+  | T.oneOf _, T.string => isFalse (by intro; contradiction)
+  | T.int, T.var _ => isFalse (by intro; contradiction)
+  | T.bool, T.var _ => isFalse (by intro; contradiction)
+  | T.string, T.var _ => isFalse (by intro; contradiction)
+  | T.int, T.func _ _ => isFalse (by intro; contradiction)
+  | T.bool, T.func _ _ => isFalse (by intro; contradiction)
+  | T.string, T.func _ _ => isFalse (by intro; contradiction)
+  | T.int, T.tuple _ => isFalse (by intro; contradiction)
+  | T.bool, T.tuple _ => isFalse (by intro; contradiction)
+  | T.string, T.tuple _ => isFalse (by intro; contradiction)
+  | T.int, T.oneOf _ => isFalse (by intro; contradiction)
+  | T.bool, T.oneOf _ => isFalse (by intro; contradiction)
+  | T.string, T.oneOf _ => isFalse (by intro; contradiction)
+  | T.func _ _, T.var _ => isFalse (by intro; contradiction)
+  | T.tuple _, T.var _ => isFalse (by intro; contradiction)
+  | T.oneOf _, T.var _ => isFalse (by intro; contradiction)
+  | T.var _, T.func _ _ => isFalse (by intro; contradiction)
+  | T.var _, T.tuple _ => isFalse (by intro; contradiction)
+  | T.var _, T.oneOf _ => isFalse (by intro; contradiction)
+  | T.oneOf _, T.tuple _ => isFalse (by intro; contradiction)
+  | T.tuple _, T.oneOf _ => isFalse (by intro; contradiction)
+  | T.oneOf _, T.func _ _ => isFalse (by intro; contradiction)
+  | T.tuple _, T.func _ _ => isFalse (by intro; contradiction)
+  | T.func _ _, T.oneOf _ => isFalse (by intro; contradiction)
+  | T.func _ _, T.tuple _ => isFalse (by intro; contradiction)
+
+def decTTuple (as bs : T × T) : Decidable (as = bs) :=
+  match as, bs with
+  | (a, b), (c, d) =>
+    match decT a c with
+    | isTrue h₁ =>
+      match decT b d with
+      | isTrue h₂  => isTrue (by rw [h₁, h₂])
+      | isFalse _ => isFalse (by intro h₂; injection h₂; contradiction)
+    | isFalse _ => isFalse (by intro h₁; injection h₁; contradiction)
 
 def decTList (as bs : List T) : Decidable (as = bs) :=
   match as, bs with
@@ -66,9 +114,11 @@ def decTList (as bs : List T) : Decidable (as = bs) :=
       | isTrue h₂ => isTrue (by rw [h₁, h₂])
       | isFalse _ => isFalse (by intro h; injection h; contradiction)
     | isFalse _ => isFalse (by intro h; injection h; contradiction)
+
 end
 
-instance DecidableEq : DecidableEq T := decT
+instance : DecidableEq T :=
+  decT
 
 def T.combine : T → T → T
 | T.oneOf xs, T.oneOf ys => T.oneOf (List.union xs ys)
