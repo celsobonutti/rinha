@@ -28,14 +28,7 @@ partial def Output.format : Output → Std.Format
 | Output.symbol s => Std.Format.text s
 | Output.list l => Std.Format.group (Std.Format.paren <| Std.Format.joinSep (l.map Output.format) " ")
 
-partial def Output.toString : Output → String
-| Output.int i => ToString.toString i
-| Output.bool b => if b then "#t" else "#f"
-| Output.string s => dquotes' s
-| Output.symbol s => s
-| Output.list l => parens ∘ hcat <| Output.toString <$> l
-
-instance : ToString Output := ⟨Output.toString⟩
+instance : ToString Output := ⟨pretty ∘ Output.format⟩
 
 instance : Std.ToFormat Output := ⟨Output.format⟩
 
@@ -55,19 +48,19 @@ macro_rules
   | `({$x, $xs:term,*}) => `(($x : Output) :: {$xs,*})
 
 def BinOp.toSchemeOp : BinOp → String
-| BinOp.Add => "sum"
+| BinOp.Add => "__builtin__sum"
 | BinOp.Sub => "-"
 | BinOp.Mul => "*"
 | BinOp.Div => "/"
 | BinOp.Rem => "%"
-| BinOp.Eq => "safe-eq?"
-| BinOp.Neq => "neq?"
+| BinOp.Eq => "__builtin__eq?"
+| BinOp.Neq => "__builtin__neq?"
 | BinOp.Lt => "<"
 | BinOp.Lte => "<="
 | BinOp.Gt => ">"
 | BinOp.Gte => ">="
-| BinOp.And => "safe-and"
-| BinOp.Or => "safe-or"
+| BinOp.And => "__builtin__and"
+| BinOp.Or => "__builtin__or"
 
 
 partial def Output.ofTerm : Term → Output
@@ -80,14 +73,14 @@ partial def Output.ofTerm : Term → Output
 | Term.Function ⟨ parameters, body ⟩ =>
   {"lambda", (parameters.map (·.value)), Output.ofTerm body}
 | Term.If ⟨ cond, thenBranch, elseBranch ⟩ =>
-  {"if", Output.ofTerm cond, Output.ofTerm thenBranch, Output.ofTerm elseBranch}
+  {"__builtin__if", Output.ofTerm cond, Output.ofTerm thenBranch, Output.ofTerm elseBranch}
 | Term.Let ⟨ name, value, body ⟩ =>
   {"letrec", {{name.value, Output.ofTerm value}}, Output.ofTerm body}
 | Term.Var name => name
 | Term.Tuple fst snd => {"cons", Output.ofTerm fst, Output.ofTerm snd}
-| Term.First t => {"safe-car", Output.ofTerm t}
-| Term.Second t => {"safe-cdr", Output.ofTerm t}
-| Term.Print x => {"println", Output.ofTerm x}
+| Term.First t => {"__builtin__car", Output.ofTerm t}
+| Term.Second t => {"__builtin__cdr", Output.ofTerm t}
+| Term.Print x => {"__builtin__println", Output.ofTerm x}
 | Term.Binary ⟨lhs, rhs, op⟩ => {BinOp.toSchemeOp op, Output.ofTerm lhs, Output.ofTerm rhs}
 
 def discardTopLevel : Output → Output := λ x =>

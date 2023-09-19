@@ -69,10 +69,15 @@ def main : List String → IO Unit
   let outputFileName ← compile fileName
   let io ← IO.Process.output { cmd := "raco", args := #["exe", outputFileName.toString] }
   if io.exitCode == 0 then
-    IO.println s!"Compiled to {outputFileName}"
+    IO.println s!"Compiled to {outputFileName.withExtension System.FilePath.exeExtension}"
   else
     IO.eprintln s!"Compilation failed with exit code {io.exitCode}"
     IO.eprintln io.stderr
+  IO.FS.removeFile outputFileName
+  pure ()
+| ["--to-racket", fileName] => do
+  let outputFileName ← compile fileName
+  IO.println s!"Compiled racket output to {outputFileName}"
   pure ()
 | ["--run", fileName] => do
   let outputFileName ← compile fileName
@@ -82,4 +87,5 @@ def main : List String → IO Unit
   else
     IO.eprintln s!"Compilation failed with exit code {io.exitCode}"
     IO.eprintln io.stderr
+  IO.FS.removeFile outputFileName
 | _ => IO.eprintln "Too many arguments"
