@@ -5,6 +5,7 @@ import Init.System.FilePath
 
 open Rinha.Printer
 open Rinha.Optimize
+open Rinha.ErrorPrinter
 
 def parseWithIOError (value : String) : IO JSON := do
   match JSON.parse value with
@@ -26,12 +27,25 @@ def typeCheck (program : Rinha.Term.Program) : IO Unit := do
   let (res, _) ← Rinha.Type.runTI (Rinha.Type.typeInference {} e)
   match res with
   | Except.ok _ => pure ()
-  | Except.error e => IO.println e
+  | Except.error e => do
+    match e.location with
+    | Option.some loc => do
+      let file <- IO.FS.readFile program.name
+      let err ← Rinha.ErrorPrinter.getMessage e file
+      throw (IO.userError ("Type error" ++ "\n" ++ (String.intercalate "\n" err)))
+
+    | Option.none =>
+      e
+      |> toString
+      |> IO.userError
+      |> throw
+
 
 def codegen (program : Rinha.Term.Program) : IO System.FilePath := do
   let baseCode ← IO.FS.readFile "base.rkt"
   let fileName := (System.FilePath.mk program.name).withExtension "rkt"
   let file ← IO.FS.Handle.mk fileName IO.FS.Mode.write
+
   let e := program.expression
   let output :=
     Rinha.Printer.vcat
@@ -60,8 +74,6 @@ def compile (path : System.FilePath) : IO System.FilePath := do
   let optimizedProgram := program.optimize
   typeCheck optimizedProgram
   codegen optimizedProgram
-
-def printRepr [Repr α] : α → IO Unit := IO.println ∘ repr
 
 def main : List String → IO Unit
 | [] => IO.eprintln "No file given"

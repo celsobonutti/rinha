@@ -163,8 +163,17 @@ def TypedBinOp.ofBinOp : BinOp → TypedBinOp
 | BinOp.And => { op := BinOp.And, left := T.bool, right := T.bool, result := T.bool }
 | BinOp.Or => { op := BinOp.Or, left := T.bool, right := T.bool, result := T.bool }
 
+partial def T.toString : T → String
+| T.int => "int"
+| T.bool => "bool"
+| T.string => "string"
+| T.func args ret => s!"({args.map toString} -> {toString ret})"
+| T.var x => x
+| T.tuple (a, b) => s!"({toString a}, {toString b})"
+| T.oneOf ts => s!"({ts.map toString})"
+
 instance : ToString T where
-  toString := reprStr
+  toString := T.toString
 
 inductive Scheme where
 | scheme : List String → T → Scheme
@@ -253,9 +262,20 @@ structure TIState where
 
 def TIState.init := TIState.mk 0 {}
 
-abbrev TI (α : Type) := ExceptT String (ReaderT TIEnv (StateT TIState IO)) α
+structure TypeError where
+  message : String
+  location : Option Term.Location := Option.none
+  deriving Repr
 
-def runTI : TI α → IO (Except String α × TIState) := λ t => do
+instance : ToString TypeError where
+  toString := λ ⟨ message, location ⟩ =>
+    match location with
+    | some l => s!"{message} starting at {l.start}, ending at {l.end_}"
+    | none => message
+
+abbrev TI (α : Type) := ExceptT TypeError (ReaderT TIEnv (StateT TIState IO)) α
+
+def runTI : TI α → IO (Except TypeError α × TIState) := λ t => do
   let (res, st) ← (t.run TIEnv.tiEnv).run TIState.init
   pure (res, st)
 
@@ -267,7 +287,7 @@ def newTyVar (prefix_ : String) : TI T := do
 def newRecursion (funcName : String) : TI String := do
   let s ← get
   if s.recursingOn.contains funcName
-    then throw "cannot shadow a recursive function"
+    then throw <| TypeError.mk "cannot shadow a recursive function" none
     else do
       set { s with recursingOn := s.recursingOn.insert funcName }
       pure funcName
@@ -280,45 +300,62 @@ def instantiate : Scheme → TI T
 
 def varBind : String → T → TI Subst := λ u t => do
   if t == T.var u then pure {}
-  else if u ∈ t.ftv then throw "occurs check fails"
+  else if u ∈ t.ftv then throw <| TypeError.mk "occurs check fails" none
   else pure $ Std.HashMap.ofList [(u, t)]
 
+def IsFunction : T → Bool
+| T.func _ _ => true
+| _ => false
+
+def ArgsLocationFor : (x : T) → Type
+| T.func _ _ => List (Location)
+| _ => Unit
+
+def defaultFor : (x : T) → ArgsLocationFor x
+| T.func _ _ => []
+| T.int => ()
+| T.bool => ()
+| T.string => ()
+| T.var _ => ()
+| T.tuple _ => ()
+| T.oneOf _ => ()
+
 mutual
-partial def mguList : List T → List T → TI Subst
+partial def mguList : List (T × Location) → List T → TI Subst
 | [], [] => pure {}
-| x :: xs, y :: ys => do
-  let s₁ ← mgu x y
-  let s₂ ← mguList (xs.map (λ x₁ => x₁.apply s₁)) (ys.map (λ y₁ => y₁.apply s₁))
+| (x, l) :: xs, y :: ys => do
+  let s₁ ← mgu l x y (defaultFor y)
+  let s₂ ← mguList (xs.map (λ (x, l) => (x.apply s₁, l))) (ys.map (λ y => y.apply s₁))
   pure $ s₁.compose s₂
-| args₁, args₂ => throw ("types do not unify: " ++ toString args₁ ++ " vs. " ++ toString args₂)
+| args₁, args₂ => throw <| ⟨ s!"wrong number of arguments: the function expected {args₁.length}, but got {args₂.length}", none ⟩
 
 
-partial def mgu : T → T → TI Subst
-| T.func args₁ ret₁, T.func args₂ ret₂ => do
+partial def mgu (l : Location) : T → (x : T) → ArgsLocationFor x → TI Subst
+| T.func args₁ ret₁, T.func args₂ ret₂, args => do
   if args₁.length != args₂.length
-    then throw ("types do not unify: " ++ toString args₁ ++ " vs. " ++ toString args₂)
-  let s₁ ← mguList args₁ args₂
-  let s₂ ← mgu (ret₁.apply s₁) (ret₂.apply s₁)
+    then throw <| ⟨ s!"wrong number of arguments: the function expected {args₁.length}, but got {args₂.length}", l ⟩
+  let s₁ ← mguList (args₁.zip args) args₂
+  let s₂ ← mgu l (ret₁.apply s₁) (ret₂.apply s₁) (defaultFor (ret₂.apply s₁))
   pure $ s₁.compose s₂
-| T.var u, t => varBind u t
-| t, T.var u => varBind u t
-| T.oneOf ts, T.oneOf ts₁ =>
+| T.var u, t, _ => varBind u t
+| t, T.var u, _ => varBind u t
+| T.oneOf ts, T.oneOf ts₁, _ =>
   -- We let any intersection here pass. If there's any error, that's gonna be caught by the runtime.
   if List.bagInter ts ts₁ == []
-    then throw $ "types do not unify: " ++ toString ts ++ " vs. " ++ toString ts₁
+    then throw ⟨ s!"can't match types: I was expecting {ts}, but found {ts₁}", l ⟩
     else pure {}
-| T.oneOf ts, t => if ts.contains t then pure {} else
-  throw $ "types do not unify: " ++ toString t ++ " is not one of " ++ toString ts
-| t, T.oneOf ts => if ts.contains t then pure {} else
-  throw $ "types do not unify: " ++ toString t ++ " is not one of " ++ toString ts
-| T.int, T.int => pure {}
-| T.bool, T.bool => pure {}
-| T.string, T.string => pure {}
-| T.tuple (a, b), T.tuple (c, d) => do
-  let s₁ ← mgu a c
-  let s₂ ← mgu b d
+| T.oneOf ts, t, _ => if ts.contains t then pure {} else
+  throw $ ⟨ s!"can't match types: I was expecting one of {ts}, but found {t}", l ⟩
+| t, T.oneOf ts, _ => if ts.contains t then pure {} else
+  throw $ ⟨ s!"can't match types: I was expecting {t}, but found one of {ts}", l ⟩
+| T.int, T.int, _ => pure {}
+| T.bool, T.bool, _ => pure {}
+| T.string, T.string, _ => pure {}
+| T.tuple (a, b), T.tuple (c, d), _ => do
+  let s₁ ← mgu l a c (defaultFor c)
+  let s₂ ← mgu l b d (defaultFor d)
   pure $ Subst.compose s₁ s₂
-| t₁, t₂ => throw $ "types do not unify: " ++ toString t₁ ++ " vs. " ++ toString t₂
+| t₁, t₂, _ => throw $ ⟨ s!"can't match types: I was expecting {t₁}, but found {t₂}", l ⟩
 end
 
 def tiLit : Literal → TI (Subst × T)
@@ -343,18 +380,18 @@ partial def tiList : TypeEnv → List Term → TI (Subst × List T)
   pure (s₁.compose s₂, t₁ :: t₂)
 
 partial def ti (env : TypeEnv) : Term → TI (Subst × T)
-| Var x => do
+| Var l x => do
   match env.vars.find? x with
   | some s => do
     let t ← instantiate s
     pure ({}, t)
-  | none => throw $ "unbound variable: " ++ x
-| Term.Int t => tiLit (Literal.int t)
-| Str t => tiLit (Literal.string t)
-| Boolean t => tiLit (Literal.bool t)
-| Call f args => do
+  | none => throw $ ⟨ s!"unbound variable: {x}", l ⟩
+| Term.Int _ t => tiLit (Literal.int t)
+| Str _ t => tiLit (Literal.string t)
+| Boolean _ t => tiLit (Literal.bool t)
+| Call _ f args => do
   match f with
-  | Var x =>
+  | Var _ x =>
     let { recursingOn, .. } ← get
     if x ∈ recursingOn
       then
@@ -364,16 +401,16 @@ partial def ti (env : TypeEnv) : Term → TI (Subst × T)
         let (s₁, t₁) ← ti env f
         let env₁ := env.apply s₁
         let (s₂, t₂) ← tiList env₁ args
-        let s₃ ← mgu (t₁.apply s₂) (T.func t₂ tv)
+        let s₃ ← mgu f.location (t₁.apply s₂) (T.func t₂ tv) (args.map (·.location))
         pure (Subst.composeMany [s₃, s₂, s₁], tv.apply s₃)
   | _ =>
     let tv ← newTyVar "α"
     let (s₁, t₁) ← ti env f
     let env₁ := env.apply s₁
     let (s₂, t₂) ← tiList env₁ args
-    let s₃ ← mgu (t₁.apply s₂) (T.func t₂ tv)
+    let s₃ ← mgu f.location (t₁.apply s₂) (T.func t₂ tv) (args.map (·.location))
     pure (Subst.composeMany [s₃, s₂, s₁], tv.apply s₃)
-| Function { parameters, value } => do
+| Function _ { parameters, value } => do
   let args := parameters.map (·.value)
   let env₁ := List.foldl (λ env x => Std.HashMap.erase env x) env.vars args
   let argsTyVars ← args.mapM (λ _ => newTyVar "α")
@@ -382,32 +419,32 @@ partial def ti (env : TypeEnv) : Term → TI (Subst × T)
   let (s₁, t₁) ← ti env₂ value
   let args₂ ← applyWhileDiff argsTyVars s₁
   pure (s₁, T.func args₂ t₁)
-| If { condition, consequent, alternative } => do
+| If _ { condition, consequent, alternative } => do
   let (s₁, t₁) ← ti env condition
-  let s₂ ← mgu t₁ T.bool
+  let s₂ ← mgu condition.location t₁ T.bool ()
   let env₁ := env.apply s₂
   let (s₃, t₃) ← ti env₁ consequent
   let env₂ := env₁.apply s₃
   let (s₄, t₄) ← ti env₂ alternative
   let t := (t₃.combine t₄).apply s₄
   pure (Subst.composeMany [s₄, s₃, s₂, s₁], t)
-| Tuple fst snd => do
+| Tuple _ fst snd => do
   let (s₁, t₁) ← ti env fst
   let env₁ := env.apply s₁
   let (s₂, t₂) ← ti env₁ snd
   pure (s₂.compose s₁, T.tuple (t₁, t₂))
-| First e => do
+| First _ e => do
   let (s, t) ← ti env e
-  let s₂ ← mgu t (T.tuple (T.var "t₀", T.var "t₁"))
+  let s₂ ← mgu e.location t (T.tuple (T.var "t₀", T.var "t₁")) ()
   pure (s₂.compose s, T.var "t₀")
-| Second e => do
+| Second _ e => do
   let (s, t) ← ti env e
-  let s₂ ← mgu t (T.tuple (T.var "t₀", T.var "t₁"))
+  let s₂ ← mgu e.location t (T.tuple (T.var "t₀", T.var "t₁")) ()
   pure (s₂.compose s, T.var "t₁")
-| Print expr => do
+| Print _ expr => do
   let (s, t) ← ti env expr
   pure (s, t)
-| f@(Let { name, value, next }) => do
+| f@(Let l { name, value, next }) => do
   let name := name.value
   if Term.isRecursiveFunction f
     then do
@@ -415,7 +452,7 @@ partial def ti (env : TypeEnv) : Term → TI (Subst × T)
       let tv := T.var recName
       let env₁ := env.insert name (Scheme.scheme [] tv)
       let (s₁, t₁) ← ti env₁ value
-      let s' ← mgu (t₁.apply s₁) tv
+      let s' ← mgu l (t₁.apply s₁) tv ()
       let env₂ := env₁.apply s'
       let scheme := generalize env₂ t₁
       let (s₂, t₂) ← ti (env₂.insert name scheme) next
@@ -426,15 +463,15 @@ partial def ti (env : TypeEnv) : Term → TI (Subst × T)
       let scheme := generalize env₁ t₁
       let (s₂, t₂) ← ti (env₁.insert name scheme) next
       pure (s₁.compose s₂, t₂)
-| Binary { lhs := leftExpr, rhs := rightExpr, op } =>
+| Binary _ { lhs := leftExpr, rhs := rightExpr, op } =>
   match TypedBinOp.ofBinOp op with
   | { left, right, op := BinOp.Add, .. } => do
     let (sLeft, tLeft) ← ti env leftExpr
-    let s₁ ← mgu (tLeft.apply sLeft) left
+    let s₁ ← mgu leftExpr.location (tLeft.apply sLeft) left (defaultFor left)
     let right₁ := right.apply s₁
     let env₁ := env.apply s₁
     let (sRight, tRight) ← ti env₁ rightExpr
-    let s₂ ← mgu (tRight.apply sRight) right₁
+    let s₂ ← mgu rightExpr.location (tRight.apply sRight) right₁ (defaultFor right₁)
     let result :=
       match tLeft, tRight with
       | T.int, T.int => T.int
@@ -444,11 +481,11 @@ partial def ti (env : TypeEnv) : Term → TI (Subst × T)
     pure (Subst.composeMany [s₂, sRight, s₁, sLeft], result)
   | { left, right, result, .. } => do
     let (sLeft, tLeft) ← ti env leftExpr
-    let s₁ ← mgu (tLeft.apply sLeft) left
+    let s₁ ← mgu leftExpr.location (tLeft.apply sLeft) left (defaultFor left)
     let right₁ := right.apply s₁
     let env₁ := env.apply s₁
     let (sRight, tRight) ← ti env₁ rightExpr
-    let s₂ ← mgu (tRight.apply sRight) right₁
+    let s₂ ← mgu rightExpr.location (tRight.apply sRight) right₁ (defaultFor right₁)
     pure (Subst.composeMany [s₂, sRight, s₁, sLeft], result)
 end
 

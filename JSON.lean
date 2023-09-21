@@ -1,7 +1,9 @@
 import Soda.Grape
 import Soda.Grape.Text
 import Map
+import Std.Data.HashMap.Basic
 
+open Std (HashMap)
 open Grape
 open Function
 
@@ -17,7 +19,7 @@ inductive JSON where
   | null : JSON
   | str : String → JSON
   | arr : List JSON → JSON
-  | obj : Map String JSON → JSON
+  | obj : List (String × JSON) → JSON
   deriving Inhabited, Repr
 
 def JSON.token : Grape α → Grape α := Text.trailing
@@ -59,3 +61,44 @@ def JSON.parse (s: String) : Option JSON :=
   match Grape.run JSON.expr (s.toSlice) with
   | Result.done res _ => some res
   | _                 => none
+
+def find [DecidableEq α] : List (α × β) → α → Option β
+| [], _ => none
+| (k, v) :: xs, k' => if k = k' then some v else find xs k'
+
+abbrev AssocList (α : Type) (β : Type) := List (α × β)
+
+def AssocList.Mem (x : α) : AssocList α β → Prop
+  | [] => False
+  | (y, _) :: ys => (x = y) ∨ (Mem x ys)
+
+instance : Membership α (AssocList α β) where
+  mem := AssocList.Mem
+
+instance Mem.decidableAssocList [DecidableEq α] (x : α) : ∀ xs : List (α × β), Decidable (x ∈ xs)
+| [] => by
+  apply Decidable.isFalse
+  simp [Membership.mem, AssocList.Mem]
+| (y, v) :: ys =>
+  if h : x = y then
+    isTrue (Or.inl h)
+  else by
+    have := Mem.decidableAssocList x ys
+    have : (x ∈ ys) ↔ (x ∈ (y, v) :: ys) := by
+      simp [(· ∈ ·), AssocList.Mem, h]
+    exact decidable_of_decidable_of_iff this
+
+theorem Or.elimLeft (xs : α ∨ β) (x: ¬α) : β :=
+  match xs with
+  | Or.inl y => absurd y x
+  | Or.inr b => b
+
+def AssocList.find [DecidableEq α] : (x : α) → { xs : AssocList α β // x ∈ xs } → β
+| x, ⟨ (y, v) :: ys, ok ⟩ =>
+  if here : x = y then
+    v
+  else
+    AssocList.find x ⟨ ys, Or.elimLeft ok here ⟩
+
+instance [DecidableEq α] : GetElem (List (α × β)) α β (λ assoc elem => elem ∈ assoc) where
+  getElem assoc elem proof := AssocList.find elem ⟨ assoc, proof ⟩

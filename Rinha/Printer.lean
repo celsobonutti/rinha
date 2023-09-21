@@ -64,24 +64,24 @@ def BinOp.toSchemeOp : BinOp → String
 
 
 partial def Output.ofTerm : Term → Output
-| Term.Int i => i
-| Term.Boolean b => b
-| Term.Str s => Output.string s
-| Term.Call f args =>
+| Term.Int _ i => i
+| Term.Boolean _ b => b
+| Term.Str _ s => Output.string s
+| Term.Call _ f args =>
   let x : List Output := Output.ofTerm f :: args.map Output.ofTerm
   Output.list x
-| Term.Function ⟨ parameters, body ⟩ =>
+| Term.Function _ ⟨ parameters, body ⟩ =>
   {"lambda", (parameters.map (·.value)), Output.ofTerm body}
-| Term.If ⟨ cond, thenBranch, elseBranch ⟩ =>
+| Term.If _ ⟨ cond, thenBranch, elseBranch ⟩ =>
   {"__builtin__if", Output.ofTerm cond, Output.ofTerm thenBranch, Output.ofTerm elseBranch}
-| Term.Let ⟨ name, value, body ⟩ =>
+| Term.Let _ ⟨ name, value, body ⟩ =>
   {"letrec", {{name.value, Output.ofTerm value}}, Output.ofTerm body}
-| Term.Var name => name
-| Term.Tuple fst snd => {"cons", Output.ofTerm fst, Output.ofTerm snd}
-| Term.First t => {"__builtin__car", Output.ofTerm t}
-| Term.Second t => {"__builtin__cdr", Output.ofTerm t}
-| Term.Print x => {"__builtin__println", Output.ofTerm x}
-| Term.Binary ⟨lhs, rhs, op⟩ => {BinOp.toSchemeOp op, Output.ofTerm lhs, Output.ofTerm rhs}
+| Term.Var _ name => name
+| Term.Tuple _ fst snd => {"cons", Output.ofTerm fst, Output.ofTerm snd}
+| Term.First _ t => {"__builtin__car", Output.ofTerm t}
+| Term.Second _ t => {"__builtin__cdr", Output.ofTerm t}
+| Term.Print _ x => {"__builtin__println", Output.ofTerm x}
+| Term.Binary _ ⟨lhs, rhs, op⟩ => {BinOp.toSchemeOp op, Output.ofTerm lhs, Output.ofTerm rhs}
 
 def discardTopLevel : Output → Output := λ x =>
   { "discard", x }
