@@ -15,9 +15,12 @@
         ((and (string? a) (number? b)) (string-append a (number->string b)))
         ((and (number? a) (string? b)) (string-append (number->string a) b))))
 
-(define/contract (__builtin__if p c a)
-  (-> boolean? any/c any/c any/c)
-  (if p c a))
+(define (/ x y) (quotient x y))
+(define (% x y) (remainder x y))
+
+(define/contract (fail-if-not-bool x)
+  (-> boolean? boolean?)
+  x)
 
 (define/contract (__builtin__or x y)
   (-> boolean? boolean? boolean?)
@@ -53,6 +56,6 @@
                           ((procedure? x) "<#closure>")
                           ((boolean? x) (if x "true" "false")))))
 
-(define __builtin__println (lambda (x) (display (show x)) x))
+(define __builtin__println (lambda (x) (display (show x)) (newline) x))
 
 (define (discard x) x (void))

@@ -73,9 +73,10 @@ partial def Output.ofTerm : Term → Output
 | Term.Function _ ⟨ parameters, body ⟩ =>
   {"lambda", (parameters.map (·.value)), Output.ofTerm body}
 | Term.If _ ⟨ cond, thenBranch, elseBranch ⟩ =>
-  {"__builtin__if", Output.ofTerm cond, Output.ofTerm thenBranch, Output.ofTerm elseBranch}
-| Term.Let _ ⟨ name, value, body ⟩ =>
-  {"letrec", {{name.value, Output.ofTerm value}}, Output.ofTerm body}
+  {"if", { "fail-if-not-bool", Output.ofTerm cond}, Output.ofTerm thenBranch, Output.ofTerm elseBranch}
+| x@(Term.Let _ ⟨ name, value, body ⟩) =>
+  let kindOfLet := if x.isRecursiveFunction then "letrec" else "let"
+  {kindOfLet, {{name.value, Output.ofTerm value}}, Output.ofTerm body}
 | Term.Var _ name => name
 | Term.Tuple _ fst snd => {"cons", Output.ofTerm fst, Output.ofTerm snd}
 | Term.First _ t => {"__builtin__car", Output.ofTerm t}
