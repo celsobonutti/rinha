@@ -320,6 +320,11 @@ def defaultFor : (x : T) → ArgsLocationFor x
 | T.tuple _ => ()
 | T.oneOf _ => ()
 
+def getArgsLocation : List Location → Location
+| [] => Location.mk 0 0
+| x :: xs => Location.mk (x.start) (List.getLastD xs x).end_
+
+
 mutual
 partial def mguList : List (T × Location) → List T → TI Subst
 | [], [] => pure {}
@@ -327,13 +332,11 @@ partial def mguList : List (T × Location) → List T → TI Subst
   let s₁ ← mgu l x y (defaultFor y)
   let s₂ ← mguList (xs.map (λ (x, l) => (x.apply s₁, l))) (ys.map (λ y => y.apply s₁))
   pure $ s₁.compose s₂
-| args₁, args₂ => throw <| ⟨ s!"wrong number of arguments: the function expected {args₁.length}, but got {args₂.length}", none ⟩
-
-
+| args₁, args₂ => throw <| ⟨ s!"Oh no! Wrong number of arguments: the function expected {args₁.length}, but got {args₂.length}", none ⟩
 partial def mgu (l : Location) : T → (x : T) → ArgsLocationFor x → TI Subst
 | T.func args₁ ret₁, T.func args₂ ret₂, args => do
   if args₁.length != args₂.length
-    then throw <| ⟨ s!"wrong number of arguments: the function expected {args₁.length}, but got {args₂.length}", l ⟩
+    then throw <| ⟨ s!"Oh no! Wrong number of arguments: the function expected {args₁.length}, but got {args₂.length}", getArgsLocation args ⟩
   let s₁ ← mguList (args₁.zip args) args₂
   let s₂ ← mgu l (ret₁.apply s₁) (ret₂.apply s₁) (defaultFor (ret₂.apply s₁))
   pure $ s₁.compose s₂
@@ -342,12 +345,12 @@ partial def mgu (l : Location) : T → (x : T) → ArgsLocationFor x → TI Subs
 | T.oneOf ts, T.oneOf ts₁, _ =>
   -- We let any intersection here pass. If there's any error, that's gonna be caught by the runtime.
   if List.bagInter ts ts₁ == []
-    then throw ⟨ s!"can't match types: I was expecting {ts}, but found {ts₁}", l ⟩
+    then throw ⟨ s!"Oh no! I can't match these types: I was expecting {ts}, but found {ts₁}", l ⟩
     else pure {}
 | T.oneOf ts, t, _ => if ts.contains t then pure {} else
-  throw $ ⟨ s!"can't match types: I was expecting one of {ts}, but found {t}", l ⟩
+  throw $ ⟨ s!"Oh no! I can't match these types: I was expecting one of {ts}, but found {t}", l ⟩
 | t, T.oneOf ts, _ => if ts.contains t then pure {} else
-  throw $ ⟨ s!"can't match types: I was expecting {t}, but found one of {ts}", l ⟩
+  throw $ ⟨ s!"Oh no! I can't match these types: I was expecting {t}, but found one of {ts}", l ⟩
 | T.int, T.int, _ => pure {}
 | T.bool, T.bool, _ => pure {}
 | T.string, T.string, _ => pure {}
@@ -355,7 +358,7 @@ partial def mgu (l : Location) : T → (x : T) → ArgsLocationFor x → TI Subs
   let s₁ ← mgu l a c (defaultFor c)
   let s₂ ← mgu l b d (defaultFor d)
   pure $ Subst.compose s₁ s₂
-| t₁, t₂, _ => throw $ ⟨ s!"can't match types: I was expecting {t₁}, but found {t₂}", l ⟩
+| t₁, t₂, _ => throw $ ⟨ s!"Oh no! I can't match these types: I was expecting {t₁}, but found {t₂}", l ⟩
 end
 
 def tiLit : Literal → TI (Subst × T)
