@@ -30,7 +30,7 @@ def typeCheck (program : Rinha.Term.Program) : IO Unit := do
   | Except.ok _ => pure ()
   | Except.error e => do
     match e.location with
-    | Option.some loc => do
+    | Option.some _ => do
       let file <- IO.FS.readFile program.name
       let err ← Rinha.ErrorPrinter.getMessage e file
       throw (IO.userError ("Type error" ++ "\n" ++ (String.intercalate "\n" err)))
