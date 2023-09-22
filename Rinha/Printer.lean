@@ -98,7 +98,7 @@ partial def Output.ofTerm (hash : Std.HashMap String Bool) : Term → Output
   let isPure := isPure hash l
   let hash := List.foldl (λ hash x => hash.insert x.value true) hash parameters
   if isPure
-  then {"memoize", {"lambda", (parameters.map (·.value)), Output.ofTerm hash body}}
+  then {"__builtin__memoize", {"lambda", (parameters.map (·.value)), Output.ofTerm hash body}}
   else {"lambda", (parameters.map (·.value)), Output.ofTerm hash body}
 | Term.If _ ⟨ cond, thenBranch, elseBranch ⟩ =>
   {"if", { "fail-if-not-bool", Output.ofTerm hash cond}, Output.ofTerm hash thenBranch, Output.ofTerm hash elseBranch}

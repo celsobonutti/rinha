@@ -58,7 +58,7 @@
 
 (define __builtin__println (lambda (x) (display (show x)) (newline) x))
 
-(define (memoize f)
+(define (__builtin__memoize f)
   (let ((table (make-hash)))
     (lambda args
       (let ((key (list->vector args)))
