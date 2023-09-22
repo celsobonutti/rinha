@@ -1,6 +1,5 @@
 import Soda.Grape
 import Soda.Grape.Text
-import Map
 import Std.Data.HashMap.Basic
 
 open Std (HashMap)
