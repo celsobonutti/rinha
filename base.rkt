@@ -58,4 +58,13 @@
 
 (define __builtin__println (lambda (x) (display (show x)) (newline) x))
 
+(define (memoize f)
+  (let ((table (make-hash)))
+    (lambda args
+      (let ((key (list->vector args)))
+        (or (hash-ref table key #f)
+            (let ((result (apply f args)))
+              (hash-set! table key result)
+              result))))))
+
 (define (discard x) x (void))

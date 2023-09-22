@@ -1,4 +1,5 @@
 import Rinha.Term
+import Std.Data.HashMap.Basic
 import Init.Data.Format.Basic
 
 namespace Rinha.Printer
@@ -62,27 +63,66 @@ def BinOp.toSchemeOp : BinOp → String
 | BinOp.And => "__builtin__and"
 | BinOp.Or => "__builtin__or"
 
+partial def isPure (hash : Std.HashMap String Bool) : Term → Bool
+| Term.Int _ _ => true
+| Term.Boolean _ _ => true
+| Term.Str _ _ => true
+| Term.Call _ f args => isPure hash f && args.all (isPure hash)
+| Term.Function _ ⟨ parameters, body ⟩ =>
+  if Rinha.Term.isParameterBeingCalled (parameters.map (·.value)) body
+    then
+      false
+    else
+      let hash := List.foldl (λ hash p => hash.insert p.value true) hash parameters
+      isPure hash body
+| Term.If _ ⟨ cond, thenBranch, elseBranch ⟩ => isPure hash cond && isPure hash thenBranch && isPure hash elseBranch
+| Term.Let _ ⟨ _, value, _ ⟩ => isPure hash value
+| Term.Var _ name => match hash.find? name with
+  | some isPure => isPure
+  | none => panic! s!"Variable {name} not found, {reprStr hash.toList}"
+| Term.Tuple _ fst snd => isPure hash fst && isPure hash snd
+| Term.First _ t => isPure hash t
+| Term.Second _ t => isPure hash t
+| Term.Print _ _ => false
+| Term.Binary _ ⟨lhs, rhs, _⟩ => isPure hash lhs && isPure hash rhs
 
-partial def Output.ofTerm : Term → Output
+
+partial def Output.ofTerm (hash : Std.HashMap String Bool) : Term → Output
 | Term.Int _ i => i
 | Term.Boolean _ b => b
 | Term.Str _ s => Output.string s
 | Term.Call _ f args =>
-  let x : List Output := Output.ofTerm f :: args.map Output.ofTerm
+  let x : List Output := Output.ofTerm hash f :: args.map (Output.ofTerm hash)
   Output.list x
-| Term.Function _ ⟨ parameters, body ⟩ =>
-  {"lambda", (parameters.map (·.value)), Output.ofTerm body}
+| l@(Term.Function _ ⟨ parameters, body ⟩) =>
+  let isPure := isPure hash l
+  let hash := List.foldl (λ hash x => hash.insert x.value true) hash parameters
+  if isPure
+  then {"memoize", {"lambda", (parameters.map (·.value)), Output.ofTerm hash body}}
+  else {"lambda", (parameters.map (·.value)), Output.ofTerm hash body}
 | Term.If _ ⟨ cond, thenBranch, elseBranch ⟩ =>
-  {"if", { "fail-if-not-bool", Output.ofTerm cond}, Output.ofTerm thenBranch, Output.ofTerm elseBranch}
-| x@(Term.Let _ ⟨ name, value, body ⟩) =>
-  let kindOfLet := if x.isRecursiveFunction then "letrec" else "let"
-  {kindOfLet, {{name.value, Output.ofTerm value}}, Output.ofTerm body}
+  {"if", { "fail-if-not-bool", Output.ofTerm hash cond}, Output.ofTerm hash thenBranch, Output.ofTerm hash elseBranch}
+| x@(Term.Let _ ⟨ name, f@(Term.Function _ ⟨ parameters, _ ⟩), next ⟩) =>
+  let isRecursive := x.isRecursiveFunction
+  let hash := if isRecursive then hash.insert name.value true else hash
+  let hash := List.foldl (λ hash p => hash.insert p.value true) hash parameters
+  let isPure := isPure hash x
+  let hash := hash.insert name.value isPure
+  let kindOfLet := if isRecursive then "letrec" else "let"
+  {kindOfLet, {{name.value, Output.ofTerm hash f}}, Output.ofTerm hash next}
+| x@(Term.Let _ ⟨ name, value, next ⟩) =>
+  let isRecursive := x.isRecursiveFunction
+  let hash := if isRecursive then hash.insert name.value true else hash
+  let isPure := isPure hash x
+  let hash := hash.insert name.value isPure
+  let kindOfLet := if isRecursive then "letrec" else "let"
+  {kindOfLet, {{name.value, Output.ofTerm hash value}}, Output.ofTerm hash next}
 | Term.Var _ name => name
-| Term.Tuple _ fst snd => {"cons", Output.ofTerm fst, Output.ofTerm snd}
-| Term.First _ t => {"__builtin__car", Output.ofTerm t}
-| Term.Second _ t => {"__builtin__cdr", Output.ofTerm t}
-| Term.Print _ x => {"__builtin__println", Output.ofTerm x}
-| Term.Binary _ ⟨lhs, rhs, op⟩ => {BinOp.toSchemeOp op, Output.ofTerm lhs, Output.ofTerm rhs}
+| Term.Tuple _ fst snd => {"cons", Output.ofTerm hash fst, Output.ofTerm hash snd}
+| Term.First _ t => {"__builtin__car", Output.ofTerm hash t}
+| Term.Second _ t => {"__builtin__cdr", Output.ofTerm hash t}
+| Term.Print _ x => {"__builtin__println", Output.ofTerm hash x}
+| Term.Binary _ ⟨lhs, rhs, op⟩ => {BinOp.toSchemeOp op, Output.ofTerm hash lhs, Output.ofTerm hash rhs}
 
 def discardTopLevel : Output → Output := λ x =>
   { "discard", x }

@@ -260,4 +260,22 @@ def Term.location : Term → Location
 | Term.Tuple l _ _ => l
 | Term.Var l _ => l
 
+partial def isParameterBeingCalled : List String → Term → Bool
+| name, Term.Call _ (Term.Var _ callee) values => name.any (· == callee) || values.any (isParameterBeingCalled name ·)
+| name, Term.Call _ _ values => values.any (isParameterBeingCalled name ·)
+| name, Term.Let _ { name := { value, .. } , value := body, next } =>
+  let name := if List.contains name value then List.filter (· != value) name else name
+  isParameterBeingCalled name body || isParameterBeingCalled name next
+| name, Term.Function _ { value, .. } => isParameterBeingCalled name value
+| name, Term.Binary _ { lhs, rhs, .. } => isParameterBeingCalled name lhs || isParameterBeingCalled name rhs
+| name, Term.If _ { condition, consequent, alternative } => List.foldl (· || isParameterBeingCalled name ·) false [condition, consequent, alternative]
+| name, Term.Tuple _ a b => isParameterBeingCalled name a || isParameterBeingCalled name b
+| name, Term.First _ e => isParameterBeingCalled name e
+| name, Term.Second _ e => isParameterBeingCalled name e
+| name, Term.Print _ e => isParameterBeingCalled name e
+| _, Term.Var _ _ => false
+| _, Term.Int _ _ => false
+| _, Term.Str _ _ => false
+| _, Term.Boolean _ _ => false
+
 end Rinha.Term

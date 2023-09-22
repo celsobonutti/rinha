@@ -1,4 +1,5 @@
 import Init.Data.Format.Basic
+import Std.Data.HashMap.Basic
 import Rinha
 import Init.Data.Repr
 import Init.System.FilePath
@@ -50,7 +51,7 @@ def codegen (program : Rinha.Term.Program) : IO System.FilePath := do
   let output :=
     Rinha.Printer.vcat
       [ Std.Format.text baseCode
-      , Rinha.Printer.Output.format <| Rinha.Printer.discardTopLevel (Rinha.Printer.Output.ofTerm e)
+      , Rinha.Printer.Output.format <| Rinha.Printer.discardTopLevel (Rinha.Printer.Output.ofTerm {} e)
       ]
       |> Std.Format.pretty
   file.putStr output

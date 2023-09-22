@@ -312,7 +312,7 @@ def ArgsLocationFor : (x : T) → Type
 | _ => Unit
 
 def defaultFor : (x : T) → ArgsLocationFor x
-| T.func _ _ => []
+| T.func params _ => params.map (λ _ => Location.mk 0 0)
 | T.int => ()
 | T.bool => ()
 | T.string => ()
@@ -326,18 +326,19 @@ def getArgsLocation : List Location → Location
 
 
 mutual
-partial def mguList : List (T × Location) → List T → TI Subst
+partial def mguList : List T → List (T × Location) → TI Subst
 | [], [] => pure {}
-| (x, l) :: xs, y :: ys => do
+| x :: xs, (y, l) :: ys => do
   let s₁ ← mgu l x y (defaultFor y)
-  let s₂ ← mguList (xs.map (λ (x, l) => (x.apply s₁, l))) (ys.map (λ y => y.apply s₁))
+  let s₂ ← mguList (xs.map (λ x => x.apply s₁)) (ys.map (λ (y, l) => (y.apply s₁, l)))
   pure $ s₁.compose s₂
 | args₁, args₂ => throw <| ⟨ s!"Oh no! Wrong number of arguments: the function expected {args₁.length}, but got {args₂.length}", none ⟩
+
 partial def mgu (l : Location) : T → (x : T) → ArgsLocationFor x → TI Subst
 | T.func args₁ ret₁, T.func args₂ ret₂, args => do
   if args₁.length != args₂.length
     then throw <| ⟨ s!"Oh no! Wrong number of arguments: the function expected {args₁.length}, but got {args₂.length}", getArgsLocation args ⟩
-  let s₁ ← mguList (args₁.zip args) args₂
+  let s₁ ← mguList args₁ (args₂.zip args)
   let s₂ ← mgu l (ret₁.apply s₁) (ret₂.apply s₁) (defaultFor (ret₂.apply s₁))
   pure $ s₁.compose s₂
 | T.var u, t, _ => varBind u t
