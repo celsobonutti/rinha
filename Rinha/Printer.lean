@@ -69,7 +69,7 @@ partial def isPure (hash : Std.HashMap String Bool) : Term → Bool
 | Term.Str _ _ => true
 | Term.Call _ f args => isPure hash f && args.all (isPure hash)
 | Term.Function _ ⟨ parameters, body ⟩ =>
-  if Rinha.Term.isParameterBeingCalled (parameters.map (·.value)) body
+  if Rinha.Term.isParameterBeingCalled (parameters.map (·.value)) body -- We can't memoize functions that call other functions because I'm lazy
     then
       false
     else

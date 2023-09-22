@@ -292,6 +292,10 @@ def newRecursion (funcName : String) : TI String := do
       set { s with recursingOn := s.recursingOn.insert funcName }
       pure funcName
 
+def removeRecursion (funcName : String) : TI Unit := do
+  let s ← get
+  set { s with recursingOn := s.recursingOn.erase funcName }
+
 def instantiate : Scheme → TI T
 | Scheme.scheme vars t => do
   let nvars ← List.mapM (λ _ => newTyVar "α") vars
@@ -462,6 +466,7 @@ partial def ti (env : TypeEnv) : Term → TI (Subst × T)
       let (s₂, t₂) ← ti (env₂.insert name scheme) next
       pure (s₁.compose s₂, t₂.remove (T.var (name ++ "call")))
     else do
+      removeRecursion name
       let (s₁, t₁) ← ti env value
       let env₁ := env.apply s₁
       let scheme := generalize env₁ t₁
