@@ -19,6 +19,5 @@ COPY . /app/
 WORKDIR /app
 
 RUN lake build
-RUN mkdir /app/files
-# CMD sleep 9999999
-CMD rinhac /var/rinha/source.rinha.json && /var/rinha/source
+CMD sleep 9999999
+CMD rinhac /var/rinha/source.rinha.json -o source && ./source

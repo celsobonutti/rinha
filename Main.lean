@@ -42,9 +42,10 @@ def typeCheck (program : Rinha.Term.Program) : IO Unit := do
       |> throw
 
 
-def codegen (program : Rinha.Term.Program) : IO System.FilePath := do
+def codegen (program : Rinha.Term.Program) (output : Option System.FilePath): IO System.FilePath := do
   let baseCode ← IO.FS.readFile "base.rkt"
-  let fileName := (System.FilePath.mk program.name).withExtension "rkt"
+  let name := output.getD program.name
+  let fileName := name.withExtension "rkt"
   let file ← IO.FS.Handle.mk fileName IO.FS.Mode.write
 
   let e := program.expression
@@ -66,7 +67,7 @@ def System.FilePath.kindOfFile (path : System.FilePath) : KindOfFile :=
   | Option.some "json" => KindOfFile.json
   | _ => KindOfFile.rinha -- We'll try to compile anything else as a Rinha file
 
-def compile (path : System.FilePath) : IO System.FilePath := do
+def compile (path : System.FilePath) (output : Option System.FilePath) : IO System.FilePath := do
   let rawJSON ← match path.kindOfFile with
     | KindOfFile.json => IO.FS.readFile path
     | KindOfFile.rinha => IO.Process.run { cmd := "rinha", args := #[path.toString] }
@@ -74,12 +75,68 @@ def compile (path : System.FilePath) : IO System.FilePath := do
   let program ← convertWithIOError json
   let optimizedProgram := program.optimize
   typeCheck optimizedProgram
-  codegen optimizedProgram
+  codegen optimizedProgram output
 
-def main : List String → IO Unit
-| [] => IO.eprintln "No file given"
-| [fileName] => do
-  let outputFileName ← compile fileName
+inductive Arg where
+| toRacket : Arg
+| run : Arg
+| file : String → Arg
+| output : String → Arg
+deriving Inhabited, DecidableEq
+
+structure Command where
+  toRacket : Bool
+  run : if toRacket then Unit else Bool
+  file : String
+  output : Option String
+
+def parseArgs : List String → List Arg
+| [] => []
+| "--to-racket" :: xs => Arg.toRacket :: parseArgs xs
+| "--run" :: xs => Arg.run :: parseArgs xs
+| "-o" :: output :: xs => Arg.output output :: parseArgs xs
+| fileName :: xs => Arg.file fileName :: parseArgs xs
+
+def getFile (arg : Arg) : Option String :=
+  match arg with
+  | Arg.file name => name
+  | _ => none
+
+def getOutput (arg : Arg) : Option String :=
+  match arg with
+  | Arg.output name => name
+  | _ => none
+
+def parseCommand (args : List Arg) : IO Command :=
+match args.findSome? getFile with
+| none => throw (IO.userError "No file given")
+| some fileName =>
+    let output := List.findSome? getOutput args
+    let toRacket := List.elem Arg.toRacket args
+    let run := List.elem Arg.run args
+    match (toRacket, run) with
+    | (true, _) => pure { toRacket := true, run := (), file := fileName, output := output }
+    | (false, true) => pure { toRacket := false, run := true, file := fileName, output := output }
+    | (false, false) => pure { toRacket := false, run := false, file := fileName, output := output }
+
+def main (args : List String) : IO Unit := do
+let command ← args |> parseArgs |> parseCommand
+match command with
+| { toRacket := true, file, output .. } =>
+  let outputFileName ← compile file output
+  IO.println s!"Compiled racket output to {outputFileName}"
+  pure ()
+| { toRacket := false, run := true, file, output } =>
+  let outputFileName ← compile file output
+  let io ← IO.Process.output { cmd := "racket", args := #[outputFileName.toString] }
+  if io.exitCode == 0 then
+    IO.println io.stdout
+  else
+    IO.eprintln s!"Compilation failed with exit code {io.exitCode}"
+    IO.eprintln io.stderr
+  IO.FS.removeFile outputFileName
+| { toRacket := false, run := false, file, output } =>
+  let outputFileName ← compile file output
   let io ← IO.Process.output { cmd := "raco", args := #["exe", outputFileName.toString] }
   if io.exitCode == 0 then
     IO.println s!"Compiled to {outputFileName.withExtension System.FilePath.exeExtension}"
@@ -88,17 +145,3 @@ def main : List String → IO Unit
     IO.eprintln io.stderr
   IO.FS.removeFile outputFileName
   pure ()
-| ["--to-racket", fileName] => do
-  let outputFileName ← compile fileName
-  IO.println s!"Compiled racket output to {outputFileName}"
-  pure ()
-| ["--run", fileName] => do
-  let outputFileName ← compile fileName
-  let io ← IO.Process.output { cmd := "racket", args := #[outputFileName.toString] }
-  if io.exitCode == 0 then
-    IO.println io.stdout
-  else
-    IO.eprintln s!"Compilation failed with exit code {io.exitCode}"
-    IO.eprintln io.stderr
-  IO.FS.removeFile outputFileName
-| _ => IO.eprintln "Too many arguments"
