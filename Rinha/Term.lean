@@ -1,4 +1,5 @@
-import JSON
+import Lean.Data.Json.Basic
+import Lean.Data.RBMap
 
 namespace Rinha.Term
 
@@ -97,84 +98,89 @@ def BinOp.from_string : String → Except String BinOp
 | "Or" => BinOp.Or
 | _ => Except.error "invalid binary operation"
 
+abbrev JSON := Lean.Json
+
+instance : GetElem (Lean.RBNode String fun x => Lean.Json) String (Option Lean.Json) (λ _ _ => True) where
+  getElem node elem _ := Lean.RBNode.find compare node elem
+
 def Location.from_JSON : JSON → Except String Location
-| JSON.obj fields =>
+| Lean.Json.obj fields =>
   match fields["location"]? with
-  | Option.some (JSON.obj fields) =>
-    match fields["start"]?, fields["end"]? with
-    | Option.some (JSON.num start), Option.some (JSON.num end_) =>
-      pure {start := start.toNat, end_ := end_.toNat}
+  | Option.some (Lean.Json.obj fields) =>
+    match fields["start"], fields["end"] with
+    | Option.some (Lean.Json.num start), Option.some (Lean.Json.num end_) =>
+      pure {start := start.mantissa.toNat, end_ := end_.mantissa.toNat}
     | _, _ => Except.error "expected a location field"
-  | _ => Except.error s!"expected a location object {reprStr fields}"
+  | _ => Except.error s!"expected a location object"
 | _ => Except.error "expected a location"
 
 def Parameter.from_JSON : JSON → Except String Parameter
-| JSON.obj fields => do
-  let location ← Location.from_JSON (JSON.obj fields)
-  match fields["text"]? with
-  | JSON.str value => pure {value, location}
+| Lean.Json.obj fields => do
+  let location ← Location.from_JSON (Lean.Json.obj fields)
+  match fields["text"] with
+  | Lean.Json.str value => pure {value, location}
   | _ => Except.error "expected a parameter"
 | _ => Except.error "expected a parameter"
 
 partial def Term.from_JSON : JSON → Except String Term
-| JSON.obj fields => do
-  let location ← Location.from_JSON (JSON.obj fields)
-  match fields["kind"]? with
+| Lean.Json.obj fields => do
+  let location ← Location.from_JSON (Lean.Json.obj fields)
+  match fields["kind"] with
   | "Int" =>
-    match fields["value"]? with
-    | JSON.num n => Term.Int location n
+    match fields["value"] with
+    | Lean.Json.num n => Term.Int location n.mantissa
     | _ => Except.error "expected a number"
   | "Str" =>
-    match fields["value"]? with
-    | JSON.str s => Term.Str location s
+    match fields["value"] with
+    | Lean.Json.str s => Term.Str location s
     | _ => Except.error "expected a string"
   | "Bool" =>
-    match fields["value"]? with
-    | JSON.bool b => Term.Boolean location b
+    match fields["value"] with
+    | Lean.Json.bool b => Term.Boolean location b
     | _ => Except.error "expected a boolean"
   | "Tuple" =>
-    match fields["first"]?, fields["second"]? with
+    match fields["first"], fields["second"] with
     | Option.some fst, Option.some snd => do
       let fst ← from_JSON fst
       let snd ← from_JSON snd
       Term.Tuple location fst snd
     | _, _ => Except.error "expected a tuple"
   | "Binary" =>
-    match fields["lhs"]?, fields["rhs"]?, fields["op"]? with
-    | Option.some lhs, Option.some rhs, Option.some (JSON.str op) => do
+    match fields["lhs"], fields["rhs"], fields["op"] with
+    | Option.some lhs, Option.some rhs, Option.some (Lean.Json.str op) => do
       let lhs ← from_JSON lhs
       let rhs ← from_JSON rhs
       let op ← BinOp.from_string op
       Term.Binary location {lhs, rhs, op}
     | _, _, _ => Except.error "expected a binary operation"
   | "Call" =>
-    match fields["callee"]?, fields["arguments"]? with
-    | Option.some callee, Option.some (JSON.arr args) => do
+    match fields["callee"], fields["arguments"] with
+    | Option.some callee, Option.some (Lean.Json.arr args) => do
       let callee ← from_JSON callee
-      let args ← args.mapM from_JSON
+      let args ← (·.toList) <$> args.mapM from_JSON
       Term.Call location callee args
     | _, _ => Except.error "expected a function call"
   | "Function" =>
-    match fields["parameters"]?, fields["value"]? with
-    | Option.some (JSON.arr params), Option.some value => do
-      let parameters ← params.mapM Parameter.from_JSON
+    match fields["parameters"], fields["value"] with
+    | Option.some (Lean.Json.arr params), Option.some value => do
+      let parameters ← (·.toList) <$> params.mapM Parameter.from_JSON
       let value ← from_JSON value
       Term.Function location {parameters, value}
     | _, _ => Except.error "expected a function"
   | "First" =>
-    match fields["value"]? with
+    match fields["value"] with
     | Option.some value => do
       let value ← from_JSON value
       Term.First location value
     | _ => Except.error "expected a first projection"
   | "Second" =>
-    match fields["value"]? with
+    match fields["value"] with
     | Option.some value => do
       let value ← from_JSON value
       Term.Second location value
     | _ => Except.error "expected a second projection"
   | "Let" =>
-    match fields["name"]?, fields["value"]?, fields["next"]? with
+    match fields["name"], fields["value"], fields["next"] with
     | Option.some name, Option.some value, Option.some next => do
       let name ← Parameter.from_JSON name
       let value ← from_JSON value
@@ -182,7 +188,7 @@ partial def Term.from_JSON : JSON → Except String Term
       Term.Let location {name, value, next}
     | _, _, _ => Except.error "expected a let binding"
   | "If" =>
-    match fields["condition"]?, fields["then"]?, fields["otherwise"]? with
+    match fields["condition"], fields["then"], fields["otherwise"] with
     | Option.some condition, Option.some consequent, Option.some otherwise => do
       let condition ← from_JSON condition
       let consequent ← from_JSON consequent
@@ -192,16 +198,16 @@ partial def Term.from_JSON : JSON → Except String Term
     | _, Option.none, _ => Except.error "expected a then branch"
     | _, _, Option.none => Except.error "expected an otherwise branch"
   | "Print" =>
-    match fields["value"]? with
+    match fields["value"] with
     | Option.some value => do
       let value ← from_JSON value
       Term.Print location value
     | _ => Except.error "expected a print expression"
   | "Var" =>
-    match fields["text"]? with
-    | Option.some (JSON.str name) => Term.Var location name
+    match fields["text"] with
+    | Option.some (Lean.Json.str name) => Term.Var location name
     | _ => Except.error "expected a variable"
-  | JSON.str k => Except.error ("invalid Term kind: " ++ k)
+  | Lean.Json.str k => Except.error ("invalid Term kind: " ++ k)
   | _ => Except.error "invalid Term"
 | _ => Except.error "invalid JSON"
 
@@ -211,9 +217,9 @@ structure Program where
 deriving Repr
 
 def Program.from_JSON : JSON → Except String Program
-| JSON.obj fields =>
-  match fields["name"]?, fields["expression"]? with
-  | Option.some (JSON.str name), Option.some expression => do
+| Lean.Json.obj fields =>
+  match fields["name"], fields["expression"] with
+  | Option.some (Lean.Json.str name), Option.some expression => do
     let expression ← Term.from_JSON expression
     pure {name, expression}
   | _, _ => Except.error "expected a program"

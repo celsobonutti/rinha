@@ -1,3 +1,4 @@
+import Lean.Data.Json.Basic
 import Init.Data.Format.Basic
 import Std.Data.HashMap.Basic
 import Rinha
@@ -8,12 +9,12 @@ open Rinha.Printer
 open Rinha.Optimize
 open Rinha.ErrorPrinter
 
-def parseWithIOError (value : String) : IO JSON := do
-  match JSON.parse value with
-  | Option.some json => pure json
-  | Option.none => throw (IO.userError "Invalid JSON value")
+def parseWithIOError (value : String) : IO Lean.Json := do
+  match Lean.Json.parse value with
+  | Except.ok json => pure json
+  | Except.error error => throw (IO.userError s!"Invalid JSON value: {error}")
 
-def convertWithIOError (value : JSON) : IO Rinha.Term.Program := do
+def convertWithIOError (value : Lean.Json) : IO Rinha.Term.Program := do
   match Rinha.Term.Program.from_JSON value with
   | Except.ok term => pure term
   | Except.error error => throw (IO.userError error)
@@ -70,7 +71,13 @@ def System.FilePath.kindOfFile (path : System.FilePath) : KindOfFile :=
 def compile (path : System.FilePath) (output : Option System.FilePath) : IO System.FilePath := do
   let rawJSON ← match path.kindOfFile with
     | KindOfFile.json => IO.FS.readFile path
-    | KindOfFile.rinha => IO.Process.run { cmd := "rinha", args := #[path.toString] }
+    | KindOfFile.rinha => do
+      let process ← IO.Process.output { cmd := "rinha", args := #[path.toString] }
+      if process.exitCode == 0 then
+        pure process.stdout
+      else
+        IO.eprintln process.stderr
+        throw (IO.userError s!"Compilation failed with exit code {process.exitCode}")
   let json ← parseWithIOError rawJSON
   let program ← convertWithIOError json
   let optimizedProgram := program.optimize
