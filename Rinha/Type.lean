@@ -304,7 +304,7 @@ def instantiate : Scheme → TI T
 
 def varBind : String → T → TI Subst := λ u t => do
   if t == T.var u then pure {}
-  else if u ∈ t.ftv then throw <| TypeError.mk "occurs check fails" none
+  else if u ∈ t.ftv then throw <| TypeError.mk (s!"occurs check fails {u} vs. {ToString.toString t}") none
   else pure $ Std.HashMap.ofList [(u, t)]
 
 def IsFunction : T → Bool
