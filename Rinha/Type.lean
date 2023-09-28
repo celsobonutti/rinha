@@ -443,12 +443,16 @@ partial def ti (env : TypeEnv) : Term → TI (Subst × T)
   pure (s₂.compose s₁, T.tuple (t₁, t₂))
 | First _ e => do
   let (s, t) ← ti env e
-  let s₂ ← mgu e.location t (T.tuple (T.var "t₀", T.var "t₁")) ()
-  pure (s₂.compose s, T.var "t₀")
+  let t₀ ← newTyVar "t"
+  let t₁ ← newTyVar "t"
+  let s₂ ← mgu e.location t (T.tuple (t₀, t₁)) ()
+  pure (s₂.compose s, t₀)
 | Second _ e => do
   let (s, t) ← ti env e
-  let s₂ ← mgu e.location t (T.tuple (T.var "t₀", T.var "t₁")) ()
-  pure (s₂.compose s, T.var "t₁")
+  let t₀ ← newTyVar "t"
+  let t₁ ← newTyVar "t"
+  let s₂ ← mgu e.location t (T.tuple (t₀, t₁)) ()
+  pure (s₂.compose s, t₁)
 | Print _ expr => do
   let (s, t) ← ti env expr
   pure (s, t)
