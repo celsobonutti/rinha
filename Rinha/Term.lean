@@ -100,7 +100,7 @@ def BinOp.from_string : String → Except String BinOp
 
 abbrev JSON := Lean.Json
 
-instance : GetElem (Lean.RBNode String fun x => Lean.Json) String (Option Lean.Json) (λ _ _ => True) where
+instance : GetElem (Lean.RBNode String fun _ => Lean.Json) String (Option Lean.Json) (λ _ _ => True) where
   getElem node elem _ := Lean.RBNode.find compare node elem
 
 def Location.from_JSON : JSON → Except String Location
@@ -108,8 +108,10 @@ def Location.from_JSON : JSON → Except String Location
   match fields["location"]? with
   | Option.some (Lean.Json.obj fields) =>
     match fields["start"], fields["end"] with
-    | Option.some (Lean.Json.num start), Option.some (Lean.Json.num end_) =>
-      pure {start := start.mantissa.toNat, end_ := end_.mantissa.toNat}
+    | Option.some s@(Lean.Json.num _), Option.some e@(Lean.Json.num _) => do
+      Location.mk
+        <$> s.getNat?
+        <*> e.getNat?
     | _, _ => Except.error "expected a location field"
   | _ => Except.error s!"expected a location object"
 | _ => Except.error "expected a location"
@@ -128,7 +130,8 @@ partial def Term.from_JSON : JSON → Except String Term
   match fields["kind"] with
   | "Int" =>
     match fields["value"] with
-    | Lean.Json.num n => Term.Int location n.mantissa
+    | Option.some n@(Lean.Json.num _) => do
+      Term.Int location <$> n.getInt?
     | _ => Except.error "expected a number"
   | "Str" =>
     match fields["value"] with

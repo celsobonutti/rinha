@@ -41,11 +41,11 @@
   (-> comparable? comparable? boolean?)
   (not (__builtin__eq? x y)))
 
-(define/contract (safe-car x)
+(define/contract (__builtin__car x)
   (-> simple-pair? any/c)
   (car x))
 
-(define/contract (safe-cdr x)
+(define/contract (__builtin__cdr x)
   (-> simple-pair? any/c)
   (cdr x))
 
